@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>STARRUNNER</title>
+  <meta name="description" content="Deep-trench interceptor run. Thread the canyon, clear the sectors, survive the core.">
+  <meta name="theme-color" content="#05070b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Starrunner">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+  <canvas id="gl" aria-label="Game view"></canvas>
+  <div id="scan" aria-hidden="true"></div>
+  <div id="damage-edge" aria-hidden="true"></div>
+
+  <!-- ================= HUD ================= -->
+  <div id="hud" class="hidden" aria-live="polite">
+    <div class="hud-top">
+      <div class="hud-cell">
+        <div class="lbl">SCORE</div>
+        <div class="val" id="h-score">0</div>
+        <div class="mult" id="h-mult">×1</div>
+      </div>
+      <div class="hud-cell center">
+        <div class="lbl" id="h-sector">SECTOR 01 · OUTER CHANNEL</div>
+        <div class="progress"><div id="h-progress"></div><i></i></div>
+      </div>
+      <div class="hud-cell right">
+        <div class="lbl">VELOCITY</div>
+        <div class="val"><span id="h-speed">0</span><small>KPS</small></div>
+      </div>
+    </div>
+    <button id="btn-pause" class="hud-btn" aria-label="Pause">
+      <svg viewBox="0 0 20 20" width="18" height="18"><rect x="5" y="4" width="3" height="12" fill="currentColor"/><rect x="12" y="4" width="3" height="12" fill="currentColor"/></svg>
+    </button>
+    <div class="hud-bottom">
+      <div class="shield">
+        <div class="lbl">SHIELD <span id="h-shield-num">100</span></div>
+        <div class="shield-bar" id="h-shield"></div>
+      </div>
+    </div>
+    <div id="reticle" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div id="lock" aria-hidden="true"><span>LOCK</span></div>
+    <div id="callouts"></div>
+    <button id="btn-fire" class="touch-only" aria-label="Fire">FIRE</button>
+  </div>
+
+  <div id="banner" aria-live="assertive">
+    <div class="b-kicker"></div>
+    <div class="b-title"></div>
+    <div class="b-tip"></div>
+  </div>
+
+  <!-- ================= TITLE ================= -->
+  <section id="screen-title" class="screen">
+    <div class="title-wrap">
+      <div class="kicker"><span class="dot"></span> DEEP-TRENCH INTERCEPTOR</div>
+      <h1 class="logo">STAR<span>RUNNER</span></h1>
+      <p class="sub">Thread the canyon. Clear the sectors. Survive the core.</p>
+
+      <div class="diff" role="radiogroup" aria-label="Difficulty">
+        <button class="diff-opt" data-diff="cadet" role="radio"><b>CADET</b><small>Forgiving shields</small></button>
+        <button class="diff-opt" data-diff="pilot" role="radio"><b>PILOT</b><small>Standard run</small></button>
+        <button class="diff-opt" data-diff="ace" role="radio"><b>ACE</b><small>Fast &amp; brutal</small></button>
+      </div>
+
+      <nav class="menu">
+        <button id="btn-launch" class="menu-item primary"><span class="idx">01</span>LAUNCH<span class="key">SPACE</span></button>
+        <button id="btn-how" class="menu-item"><span class="idx">02</span>FLIGHT MANUAL</button>
+        <button id="btn-settings" class="menu-item"><span class="idx">03</span>SETTINGS</button>
+        <button id="btn-install" class="menu-item hidden"><span class="idx">04</span>INSTALL APP</button>
+      </nav>
+
+      <div class="record" id="record">NO RECORD YET</div>
+    </div>
+  </section>
+
+  <!-- ================= PAUSE ================= -->
+  <section id="screen-pause" class="screen dim hidden">
+    <div class="card">
+      <div class="kicker">HOLDING PATTERN</div>
+      <h2>PAUSED</h2>
+      <nav class="menu">
+        <button id="btn-resume" class="menu-item primary"><span class="idx">01</span>RESUME</button>
+        <button id="btn-pause-settings" class="menu-item"><span class="idx">02</span>SETTINGS</button>
+        <button id="btn-quit" class="menu-item"><span class="idx">03</span>ABORT RUN</button>
+      </nav>
+    </div>
+  </section>
+
+  <!-- ================= GAME OVER ================= -->
+  <section id="screen-over" class="screen dim hidden">
+    <div class="card">
+      <div class="kicker red">SIGNAL LOST</div>
+      <h2>SHIP DOWN</h2>
+      <div class="newrec hidden" id="o-newrec">NEW RECORD</div>
+      <div class="big-score" id="o-score">0</div>
+      <dl class="stats">
+        <div><dt>SECTOR</dt><dd id="o-sector">1</dd></div>
+        <div><dt>KILLS</dt><dd id="o-kills">0</dd></div>
+        <div><dt>CLOSE CALLS</dt><dd id="o-close">0</dd></div>
+        <div><dt>DISTANCE</dt><dd id="o-dist">0</dd></div>
+      </dl>
+      <div class="record small" id="o-best"></div>
+      <nav class="menu">
+        <button id="btn-retry" class="menu-item primary"><span class="idx">01</span>FLY AGAIN<span class="key">SPACE</span></button>
+        <button id="btn-menu" class="menu-item"><span class="idx">02</span>MAIN MENU</button>
+      </nav>
+    </div>
+  </section>
+
+  <!-- ================= PANELS ================= -->
+  <section id="panel-how" class="panel hidden" role="dialog" aria-label="Flight manual">
+    <div class="card wide">
+      <div class="kicker">FLIGHT MANUAL</div>
+      <h2>HOW TO FLY</h2>
+      <div class="cols">
+        <div>
+          <h3>Controls</h3>
+          <table class="keys">
+            <tr><td><kbd>Mouse</kbd></td><td>Steer — ship follows the cursor</td></tr>
+            <tr><td><kbd>WASD</kbd> <kbd>←↑↓→</kbd></td><td>Steer</td></tr>
+            <tr><td><kbd>Click</kbd> <kbd>Space</kbd></td><td>Fire cannons</td></tr>
+            <tr><td><kbd>Drag</kbd></td><td>Touch: steer anywhere on screen</td></tr>
+            <tr><td><kbd>FIRE</kbd></td><td>Touch: hold to fire (or enable auto-fire)</td></tr>
+            <tr><td><kbd>Gamepad</kbd></td><td>Stick to steer, A / RT to fire</td></tr>
+            <tr><td><kbd>P</kbd> <kbd>Esc</kbd></td><td>Pause</td></tr>
+          </table>
+        </div>
+        <div>
+          <h3>The run</h3>
+          <ul class="tips">
+            <li><b>Sectors</b> get faster and denser. Each one adds a new threat.</li>
+            <li><b>Glowing edges</b> mark solid structure. <span class="c-cyan">Cyan frames</span> are the way through.</li>
+            <li><b>Targeting computer</b> locks the nearest turret or mine. Your bolts converge on it.</li>
+            <li><b>Close calls</b> and kills build your multiplier, up to ×8. Taking a hit resets it.</li>
+            <li><span class="c-cyan">Shield cells</span> restore 30. Every sector gate restores 25.</li>
+          </ul>
+        </div>
+      </div>
+      <button class="menu-item primary close-panel"><span class="idx">✕</span>CLOSE</button>
+    </div>
+  </section>
+
+  <section id="panel-settings" class="panel hidden" role="dialog" aria-label="Settings">
+    <div class="card">
+      <div class="kicker">SYSTEMS</div>
+      <h2>SETTINGS</h2>
+      <div class="settings">
+        <label class="row"><span>Sound effects</span><input type="checkbox" id="s-sfx"><i class="tog"></i></label>
+        <label class="row"><span>Music</span><input type="checkbox" id="s-music"><i class="tog"></i></label>
+        <label class="row"><span>Motion blur</span><input type="checkbox" id="s-blur"><i class="tog"></i></label>
+        <label class="row"><span>Invert vertical</span><input type="checkbox" id="s-invert"><i class="tog"></i></label>
+        <label class="row"><span>Touch auto-fire on lock</span><input type="checkbox" id="s-autofire"><i class="tog"></i></label>
+        <div class="row"><span>Graphics</span>
+          <div class="seg" id="s-quality">
+            <button data-q="low">LOW</button><button data-q="medium">MED</button><button data-q="high">HIGH</button>
+          </div>
+        </div>
+      </div>
+      <button class="menu-item primary close-panel"><span class="idx">✕</span>DONE</button>
+    </div>
+  </section>
+
+  <div id="loading"><div class="spin"></div><span>SPOOLING REACTOR…</span></div>
+  <noscript><p style="color:#fff;padding:2rem">STARRUNNER needs JavaScript and WebGL.</p></noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
