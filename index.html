@@ -52,10 +52,9 @@
         <div class="shield-bar" id="h-shield"></div>
       </div>
     </div>
+    <div id="signs" aria-hidden="true"></div>
     <div id="callouts"></div>
-    <div id="prompt" aria-live="polite"></div>
     <button id="btn-bank" class="touch-only" aria-label="Hold to turn sideways">BANK</button>
-    <canvas id="radar" width="300" height="520" aria-hidden="true"></canvas>
   </div>
 
   <div id="banner" aria-live="assertive">
@@ -145,10 +144,11 @@
           <ul class="tips">
             <li><b>The canyon winds, climbs and dives.</b> The ship doesn't steer itself: follow the course.</li>
             <li><b>Raised floors</b> force you up. <b>Tunnels</b> roof the canyon over: stay low, then burst back out.</li>
-            <li><b>Pinch gaps</b> are too narrow for your wings. Hold click to turn <b>sideways</b> and slip through.</li>
+            <li><b>Sideways gaps</b> are too narrow for your wings. The walls slope in behind amber warning stripes: hold click to turn <b>sideways</b> and slip through.</li>
             <li><b>Scraping stone</b> (walls, floor, roof, rim) drains shield and breaks your multiplier.</li>
-            <li><b>Clean flying</b> builds a multiplier up to ×8. Clearing a hazard cleanly scores and repairs shield; every sector gate repairs more.</li>
-            <li><b>The radar</b> (bottom right) shows the canyon ahead, top-down and side-on.</li>
+            <li><b>Clean flying</b> builds a multiplier up to ×8. Clearing a hazard cleanly scores and repairs shield.</li>
+            <li><b>Warning signs</b> at the top count down to the next hazards.</li>
+            <li><b>Each sector ends in open space:</b> a few seconds of free flight while your shield repairs, then follow the lights into the next corridor. Every sector is faster and adds shield capacity.</li>
           </ul>
         </div>
       </div>
@@ -163,7 +163,11 @@
       <div class="settings">
         <label class="row"><span>Sound effects</span><input type="checkbox" id="s-sfx"><i class="tog"></i></label>
         <label class="row"><span>Music</span><input type="checkbox" id="s-music"><i class="tog"></i></label>
-        <label class="row"><span>Motion blur</span><input type="checkbox" id="s-blur"><i class="tog"></i></label>
+        <div class="row"><span>Speed blur</span>
+          <div class="seg" id="s-blur">
+            <button data-b="off">OFF</button><button data-b="low">LOW</button><button data-b="med">MED</button><button data-b="high">HIGH</button><button data-b="max">MAX</button>
+          </div>
+        </div>
         <label class="row"><span>Invert vertical</span><input type="checkbox" id="s-invert"><i class="tog"></i></label>
         <div class="row"><span>Graphics</span>
           <div class="seg" id="s-quality">

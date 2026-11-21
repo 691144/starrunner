@@ -1,7 +1,7 @@
 // STARRUNNER core: a winding, narrowing canyon flown at ever-increasing speed.
 import * as THREE from 'three';
 import { Trench } from './trench.js';
-import { Course, HW, TH, LAT, VERT, SHIP_W, SHIP_W_BANK, SHIP_H, speedAt, sectorLength, bendMaterial, bendDepthMaterial } from './course.js';
+import { Course, HW, TH, LAT, VERT, SHIP_W, SHIP_W_BANK, SHIP_H, speedAt, bendMaterial, bendDepthMaterial } from './course.js';
 import { Particles, PostFX, glowSprite } from './fx.js';
 import { buildShip } from './ship.js';
 
@@ -11,9 +11,9 @@ const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
 const pad2 = n => String(n).padStart(2, '0');
 
 export const SECTORS = [
-  { name: 'OUTER CHANNEL', tip: 'Follow the canyon. Climb over the raised floor.' },
-  { name: 'SWEEPING BENDS', tip: 'Tunnels ahead. Stay low and keep your line.' },
-  { name: 'THE NARROWS', tip: 'Gaps too narrow for your wings: hold click to turn sideways.' },
+  { name: 'OUTER CHANNEL', tip: 'Watch the signs up top. Striped walls mean a gap: hold click to turn sideways.' },
+  { name: 'SWEEPING BENDS', tip: 'Faster now, and more shield to spend.' },
+  { name: 'THE NARROWS', tip: 'The canyon closes in. Keep your line.' },
   { name: 'SERPENTINE', tip: 'Tight S-bends at speed. Smooth inputs win.' },
   { name: 'THE SQUEEZE', tip: 'The ceiling drops. Mind your height.' },
   { name: 'HYPERLANE', tip: 'The canyon barely keeps up with you.' },
@@ -32,7 +32,15 @@ export const DIFFS = {
 };
 
 const ACCENTS = [0xffb347, 0x59d8ff, 0xff5a4a, 0x9dff6a, 0xd48cff, 0xfff27a, 0xff7ad9, 0x7affe4];
-const RADAR_N = 30, RADAR_STEP = 11;
+// speed-blur levels: post blur strength, speed-line length/brightness, extra field of view
+export const BLUR = {
+  off: { blur: 0, lines: 0.6, fov: 6 },
+  low: { blur: 0.6, lines: 1, fov: 9 },
+  med: { blur: 1, lines: 1.4, fov: 11 },
+  high: { blur: 1.7, lines: 2, fov: 14 },
+  max: { blur: 2.6, lines: 2.8, fov: 18 },
+};
+const SHIELD0 = 100, SHIELD_STEP = 20, SHIELD_CAP = 300;   // shield capacity grows every sector
 
 export class Game {
   constructor(canvas, sound, input, hud) {
@@ -43,7 +51,7 @@ export class Game {
     this.time = 0;
     this.diffKey = 'pilot';
     this.diff = DIFFS.pilot;
-    this.settings = { quality: 'high', blur: true, invertY: false };
+    this.settings = { quality: 'high', blur: 'med', invertY: false };
 
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' }));
     r.toneMapping = THREE.ACESFilmicToneMapping;
@@ -83,7 +91,8 @@ export class Game {
 
     this.box = new THREE.BoxGeometry(1, 1, 1);
     this.darkMat = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.6, metalness: 0.55 });
-    this.cyanMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 0.9, 1).multiplyScalar(3) });
+    this.cyanMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 0.9, 1).multiplyScalar(3), fog: false });
+    this.guideMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 0.9, 1).multiplyScalar(2.4), fog: false });
     // tunnel roofs use their own bend mapping (slab hangs from the rim down to the tunnel underside)
     this.roofMat = bendMaterial(new THREE.MeshStandardMaterial({ map: this.trench.greebleTex, color: 0x9aa0a8, roughness: 0.8, metalness: 0.3 }), this.course, 'roof');
     this.roofLightMat = bendMaterial(new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.7, 0.3).multiplyScalar(3) }), this.course, 'roof');
@@ -105,14 +114,10 @@ export class Game {
     this.edge = [0, 0, 0, 0];
     this.bank = 0;
     this.lim = {};
-    this.promptKind = null;
     this.maxMult = 1;
-    this.radarT = 0;
-    this.radar = {
-      n: RADAR_N, step: RADAR_STEP,
-      lft: new Float32Array(RADAR_N), rgt: new Float32Array(RADAR_N), flo: new Float32Array(RADAR_N), cei: new Float32Array(RADAR_N),
-      shipY: 0,
-    };
+    this.signT = 0;
+    this.shieldMax = SHIELD0;
+    this.inOpen = false;
     this.c1 = {}; this.c2 = {}; this.c3 = {};
     this.tmp = new THREE.Vector3();
     this.tmp2 = new THREE.Vector3();
@@ -134,7 +139,6 @@ export class Game {
     for (let i = 0; i < n; i++) {
       let x, y, z, l;
       do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = Math.hypot(x, y, z); } while (l > 1 || l < 0.1);
-      y = Math.abs(y) * 0.9 + 0.05;
       const R = 2600 / Math.hypot(x, y, z);
       pos.set([x * R, y * R, z * R], i * 3);
       const b = Math.pow(Math.random(), 3) * 1.6 + 0.25;
@@ -249,23 +253,20 @@ export class Game {
     this.speed = 80;
     this.state = 'playing';
     this.score = 0;
-    this.shield = 100;
+    this.shieldMax = SHIELD0;
+    this.shield = SHIELD0;
     this.combo = 0;
     this.cleared = 0;
     this.maxMult = 1;
     this.bank = 0;
-    this.promptKind = null;
     this.sector = 1;
+    this.inOpen = false;
     this.invuln = 2.0;
     this.distance = 0;
     this.cleanT = 0;
     this.scrapeSfxT = 0;
     this.wasScraping = false;
-    this.secStart = 0;
-    this.secEnd = -sectorLength(1);
-    this.gateN = 1;
-    this.gateZ = this.secEnd;
-    this.gateSpawned = false;
+    this.setSectorBounds(1);
     this.lineData.forEach(l => { l.z = 1e9; });
     this.ship.visible = true;
     this.setAccent(ACCENTS[0]);
@@ -291,6 +292,16 @@ export class Game {
     this.sound.stopMusic();
   }
 
+  // world-z of this sector's corridor entry, corridor exit and the next corridor's entry
+  setSectorBounds(n) {
+    const b = this.course.sec(n), z0 = this.course.z0;
+    this.secStart = z0 - b.s0;
+    this.exitZ = z0 - b.c1;
+    this.entryZ = z0 - b.s1;
+    this.gateSpawned = false;
+    this.guideSpawned = false;
+  }
+
   setAccent(hex) {
     this.trench.setAccent(hex);
     this.roofLightMat.color.set(hex).multiplyScalar(3);
@@ -299,7 +310,7 @@ export class Game {
   clearWorld() {
     for (const m of this.roofs || []) this.disposeRoof(m);
     this.roofs = [];
-    this.hud.prompt(null);
+    this.hud.signs([]);
     for (const o of this.objs) this.disposeObj(o);
     this.objs.length = 0;
     for (const d of this.debris) this.scene.remove(d.mesh);
@@ -407,21 +418,25 @@ export class Game {
       this.combo++;
     }
 
+    // corridor exit -> open space -> next corridor entry
+    if (!this.inOpen && s.z < this.exitZ) this.onExit();
+    if (this.inOpen && s.z < this.entryZ) this.onEntry();
+    if (this.inOpen) this.shield = Math.min(this.shieldMax, this.shield + 6 * dt);   // relax: slow repair
+
     this.spawnAhead();
     this.updateObjects(dt, true, s.z);
     this.updateFeatures(true);
 
-    if (this.shield < 30 && this.state === 'playing') {
+    if (this.shield < this.shieldMax * 0.25 && this.state === 'playing') {
       this.alarmT = (this.alarmT || 0) - dt;
       if (this.alarmT <= 0) { this.sound.alarm(); this.alarmT = 1.4; }
     }
 
-    const prog = clamp((this.secStart - s.z) / (this.secStart - this.secEnd), 0, 1);
+    const prog = clamp((this.secStart - s.z) / (this.secStart - this.exitZ), 0, 1);
     this.hud.update({
-      score: Math.floor(this.score), mult, speed: Math.round(this.speed * 4.2), shield: this.shield,
+      score: Math.floor(this.score), mult, speed: Math.round(this.speed * 4.2), shield: this.shield, shieldMax: this.shieldMax,
       progress: prog, sector: this.sector, sectorName: sectorInfo(this.sector).name, invuln: this.invuln > 0,
     });
-    this.updateRadar(dt);
     this.sound.engine(this.speed / 240, 0.6);
   }
 
@@ -447,6 +462,12 @@ export class Game {
   contact(dt, c) {
     const s = this.ship.position;
     const { hitX, hitY, L } = this.clampToCanyon(c);
+    if (c.open) {   // open space: the funnel just guides you in, nothing to hit
+      this.edge.fill(0);
+      this.hud.edges(this.edge);
+      this.wasScraping = false;
+      return;
+    }
 
     // proximity warning (0..1 per edge: left, right, top, bottom)
     // (scaled to the corridor so a deliberately tight gap doesn't keep the screen glowing red)
@@ -465,7 +486,7 @@ export class Game {
       if (this.invuln <= 0) {
         if (!this.wasScraping) this.damage(7, 'impact');
         // forcing a ship through a gap it physically can't fit is far worse than brushing a wall
-        this.shield -= ((L.sqX || L.sqY) ? 110 : 30) * dt * this.diff.dmg;
+        this.shield -= ((L.sqX || L.sqY) ? 75 : 30) * dt * this.diff.dmg;
         this.shake = Math.max(this.shake, 0.45);
         this.aberr = Math.max(this.aberr, 0.007);
         if (this.shield <= 0) { this.shield = 0; this.die(); return; }
@@ -504,7 +525,7 @@ export class Game {
     this.shake = 1.6;
     this.sound.stopMusic();
     this.hud.edges([0, 0, 0, 0]);
-    this.hud.update({ score: Math.floor(this.score), mult: 1, speed: 0, shield: 0, progress: 0, sector: this.sector, sectorName: sectorInfo(this.sector).name });
+    this.hud.update({ score: Math.floor(this.score), mult: 1, speed: 0, shield: 0, shieldMax: this.shieldMax, progress: 0, sector: this.sector, sectorName: sectorInfo(this.sector).name });
     if (navigator.vibrate) try { navigator.vibrate([90, 40, 160]); } catch { /* noop */ }
   }
 
@@ -515,8 +536,32 @@ export class Game {
   // ---------------------------------------------------------------- gates, features, tunnel roofs
   spawnAhead() {
     const s = this.ship.position;
-    const horizon = s.z - 560;
-    if (!this.gateSpawned && this.gateZ > horizon) { this.gateSpawned = true; this.spawnGate(this.gateZ, this.gateN); }
+    if (!this.guideSpawned && this.exitZ > s.z - 700) { this.guideSpawned = true; this.spawnGuide(this.exitZ, this.entryZ); }
+    if (!this.gateSpawned && this.entryZ > s.z - 1400) { this.gateSpawned = true; this.spawnGate(this.entryZ, this.sector + 1); }
+  }
+
+  // approach lights across open space: rows that mark the flyable funnel, converging on the next entry
+  spawnGuide(z0, z1) {
+    const rows = [];
+    for (let z = z0 - 30; z > z1 + 4; z -= 26) rows.push(z);
+    const inst = new THREE.InstancedMesh(this.box, this.guideMat, rows.length * 4);
+    const o = new THREE.Object3D(), c = this.c3;
+    let k = 0;
+    for (const z of rows) {
+      const t = this.course.at(z, c);
+      const midY = (t.floor + t.top) / 2;
+      for (const [x, y] of [[t.x + t.lw, midY], [t.x + t.rw, midY], [t.x, t.floor], [t.x, t.top]]) {
+        o.position.set(x, y, z);
+        o.scale.set(0.45, 0.45, 3.2);
+        o.updateMatrix();
+        inst.setMatrixAt(k++, o.matrix);
+      }
+    }
+    inst.frustumCulled = false;
+    const g = new THREE.Group();
+    g.add(inst);
+    this.scene.add(g);
+    this.objs.push({ type: 'guide', z: z1, group: g });
   }
 
   spawnGate(z, n) {
@@ -542,10 +587,7 @@ export class Game {
     for (let i = this.objs.length - 1; i >= 0; i--) {
       const o = this.objs[i];
       if (o.z > s.z + 70) { this.disposeObj(o); this.objs.splice(i, 1); continue; }
-      if (o.type === 'gate') {
-        o.curtain.material.map.offset.y = (this.time * 0.6) % 1;
-        if (live && !o.passed && s.z < o.z) { o.passed = true; this.onGate(o); }
-      }
+      if (o.type === 'gate') o.curtain.material.map.offset.y = (this.time * 0.6) % 1;
     }
   }
 
@@ -555,7 +597,7 @@ export class Game {
     for (let i = this.roofs.length - 1; i >= 0; i--) {
       if (this.roofs[i].ze > s.z + 220) { this.disposeRoof(this.roofs[i]); this.roofs.splice(i, 1); }
     }
-    let next = null;
+    const signs = [], sp = Math.max(30, this.speed);
     for (const f of c.features) {
       const r = c.zRange(f);
       // build roofs as tunnels come into range
@@ -569,17 +611,17 @@ export class Game {
         if (!f.hit) this.featureCleared(f);
         continue;
       }
-      if (!next && s.z > r.ze) { next = f; next._r = r; }
+      if (s.z > r.zhe) signs.push({ id: f.id, kind: f.type, side: f.side, t: (s.z - r.zhs) / sp });
     }
     this.scrapedNow = false;
+    if (!live) return;
 
-    // calm, steady prompt (no flashing) while a feature is approaching or underway
-    let kind = null;
-    if (live && next) {
-      const lead = this.speed * 2.8;
-      if (next._r.zs - s.z < lead) kind = next.type;
-    }
-    if (kind !== this.promptKind) { this.promptKind = kind; this.hud.prompt(kind); }
+    // floating warning signs (steady, no flashing) for what is coming up in the next few seconds
+    if (this.time < this.signT) return;
+    this.signT = this.time + 0.1;
+    if (!this.inOpen) signs.push({ id: 'x' + this.sector, kind: 'exit', t: (s.z - this.exitZ) / sp });
+    else signs.push({ id: 'e' + this.sector, kind: 'entry', t: (s.z - this.entryZ) / sp });
+    this.hud.signs(signs.filter(g => g.t < 6.5).sort((a, b) => a.t - b.t).slice(0, 3));
   }
 
   featureCleared(f) {
@@ -588,7 +630,7 @@ export class Game {
     const base = { hump: 250, tunnel: 400, pinch: 600, shoulder: 250 }[f.type];
     const pts = base * this.mult() * Math.max(1, Math.ceil(this.sector / 2));
     this.score += pts;
-    this.shield = Math.min(100, this.shield + 8);
+    this.shield = Math.min(this.shieldMax, this.shield + 8);
     const label = { hump: 'CLEARED', tunnel: 'TUNNEL CLEARED', pinch: 'SIDEWAYS!', shoulder: 'CLEARED' }[f.type];
     this.hud.callout(`${label} +${pts}`, f.type === 'pinch' ? 'gold' : 'cyan');
     this.sound.pickup();
@@ -626,41 +668,31 @@ export class Game {
     m.geos.forEach(g => g.dispose());
   }
 
-  onGate(o) {
-    const n = o.n;
+  // leaving the corridor: sector clear, shield capacity grows, a few seconds of free flight
+  onExit() {
+    this.inOpen = true;
+    const n = this.sector;
     const bonus = 1000 * n;
     this.score += bonus;
-    this.shield = Math.min(100, this.shield + 25);
-    this.sector = n + 1;
-    this.gateN = n + 1;
-    this.secStart = o.z;
-    this.secEnd = o.z - sectorLength(n + 1);
-    this.gateZ = this.secEnd;
-    this.gateSpawned = false;
-    this.setAccent(ACCENTS[(this.sector - 1) % ACCENTS.length]);
-    const info = sectorInfo(this.sector);
-    this.hud.banner(`SECTOR ${pad2(n)} CLEAR · +${bonus.toLocaleString()}`, `SECTOR ${pad2(this.sector)} · ${info.name}`, info.tip);
+    this.shieldMax = Math.min(SHIELD_CAP, this.shieldMax + SHIELD_STEP);
+    this.shield = Math.min(this.shieldMax, this.shield + 25);
+    this.hud.banner(`SECTOR ${pad2(n)} CLEAR · +${bonus.toLocaleString()}`, 'OPEN SPACE',
+      `Shield capacity ${this.shieldMax}. Breathe, then line up with the next corridor.`);
     this.sound.gate();
-    this.sound.startMusic(this.sector);
-    this.flash.setRGB(0.15, 0.5, 0.6);
-    this.fovKick = 10;
+    this.flash.setRGB(0.06, 0.18, 0.22);
+    this.fovKick = 6;
   }
 
-  // ---------------------------------------------------------------- radar (course preview for the HUD)
-  updateRadar(dt) {
-    this.radarT -= dt;
-    if (this.radarT > 0) return;
-    this.radarT = 1 / 24;
-    const s = this.ship.position, R = this.radar, course = this.course;
-    for (let i = 0; i < R.n; i++) {
-      const t = course.at(s.z - i * R.step, this.c3);
-      R.lft[i] = t.x + t.lw - s.x;
-      R.rgt[i] = t.x + t.rw - s.x;
-      R.flo[i] = t.floor;
-      R.cei[i] = t.top;
-    }
-    R.shipY = s.y;
-    this.hud.radar(R);
+  // entering the next corridor: the next sector starts
+  onEntry() {
+    this.inOpen = false;
+    this.sector++;
+    this.setSectorBounds(this.sector);
+    this.setAccent(ACCENTS[(this.sector - 1) % ACCENTS.length]);
+    const info = sectorInfo(this.sector);
+    this.hud.banner(`SECTOR ${pad2(this.sector)}`, info.name, info.tip);
+    this.sound.startMusic(this.sector);
+    this.fovKick = 8;
   }
 
   // ---------------------------------------------------------------- effects
@@ -731,7 +763,8 @@ export class Game {
     }
     const sp = clamp((this.speed - 60) / 180, 0, 1);
     this.fovKick *= Math.exp(-dt * 2.5);
-    const fov = this.baseFov + sp * 9 + this.fovKick;
+    const BL = BLUR[this.settings.blur] || BLUR.med;
+    const fov = this.baseFov + sp * BL.fov + this.fovKick;
     if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix(); }
 
     // lights + sky follow
@@ -745,18 +778,17 @@ export class Game {
 
     // speed lines hug the course
     const arr = this.lines.geometry.attributes.position.array;
-    const len = 1 + this.speed * 0.06;
+    const len = (1 + this.speed * 0.06) * BL.lines;
     this.lineData.forEach((l, i) => {
       if (l.z > cam.position.z + 2 || l.z < cam.position.z - 420) {
         l.z = cam.position.z - rand(60, 400);
         const t = course.at(l.z, this.c3);
-        const w = HW * t.sx - 0.6;
-        l.x = t.x + rand(-w, w); l.y = t.floor + rand(0.5, Math.max(1, t.top - t.floor));
+        l.x = t.x + rand(t.lw + 0.6, t.rw - 0.6); l.y = t.floor + rand(0.5, Math.max(1, t.top - t.floor));
       }
       arr.set([l.x, l.y, l.z, l.x, l.y, l.z + len], i * 6);
     });
     this.lines.geometry.attributes.position.needsUpdate = true;
-    this.lines.material.opacity = 0.12 + sp * 0.4;
+    this.lines.material.opacity = Math.min(0.85, (0.12 + sp * 0.4) * (0.6 + 0.4 * BL.lines));
 
     this.trench.update(cam.position.z);
 
@@ -764,7 +796,7 @@ export class Game {
     const u = this.post.mat.uniforms;
     const p = this.tmp.set(ca.x, s.y + 0.9 + (ca.y - c.y) * 0.55, s.z - 300).project(cam);
     u.uCenter.value.set(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5);
-    u.uBlur.value = this.settings.blur ? 0.02 + sp * 0.075 : 0;
+    u.uBlur.value = BL.blur * (0.02 + sp * 0.075);
     this.aberr *= Math.exp(-dt * 4);
     u.uAberr.value = this.aberr;
     u.uTime.value = this.time;

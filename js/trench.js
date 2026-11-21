@@ -81,8 +81,8 @@ export class Trench {
 
     const wallTex = panelTexture(512, '#8d9299', 5, true);
     const greebleTex = panelTexture(256, '#9aa0a7', 3, true);
-    this.wallMat = bendMaterial(new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.82, metalness: 0.18 }), course);
-    this.greebleMat = bendMaterial(new THREE.MeshStandardMaterial({ map: greebleTex, roughness: 0.75, metalness: 0.25 }), course);
+    this.wallMat = bendMaterial(new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.82, metalness: 0.18 }), course, 'trench', true);
+    this.greebleMat = bendMaterial(new THREE.MeshStandardMaterial({ map: greebleTex, roughness: 0.75, metalness: 0.25 }), course, 'trench', true);
     this.accentMat = bendMaterial(new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.7, 0.3).multiplyScalar(3) }), course);
     this.whiteMat = bendMaterial(new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.95, 0.85).multiplyScalar(2.2) }), course);
     this.greebleTex = greebleTex;

@@ -119,13 +119,31 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .touch-only { display: none; }
 @media (hover: none) and (pointer: coarse) { .touch-only { display: block; } .menu-item .key { display: none; } }
 
-/* steady (non-flashing) approach prompt + bank button */
-#prompt { position: absolute; left: 50%; bottom: calc(86px + var(--safe-b)); transform: translateX(-50%); padding: 8px 18px; font-family: var(--display); font-weight: 700;
-  font-size: clamp(12px, 1.7vw, 16px); letter-spacing: .2em; color: var(--steel); background: rgba(4,7,11,.6); border: 1px solid rgba(201,209,219,.3);
-  opacity: 0; transition: opacity .6s ease; white-space: nowrap; pointer-events: none; }
-#prompt.on { opacity: 1; }
-@media (max-width: 640px) { #prompt { bottom: calc(176px + var(--safe-b)); max-width: 88vw; white-space: normal; text-align: center; font-size: 12px; } }
-#prompt.gold { color: var(--amber); border-color: var(--amber); }
+/* floating hazard warning signs (steady: they fade in and out, never flash) */
+#signs { position: absolute; left: 50%; top: calc(92px + var(--safe-t)); transform: translateX(-50%); display: flex; gap: 10px; align-items: flex-start; pointer-events: none; }
+.sign { display: flex; flex-direction: column; align-items: center; width: 108px; padding: 8px 6px 7px; color: var(--steel);
+  background: rgba(4,7,11,.62); border: 1px solid rgba(201,209,219,.3);
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%, 0 12px);
+  opacity: 0; transform: translateY(-10px) scale(.94); transition: opacity .45s ease, transform .45s ease, background .35s ease, color .35s ease, border-color .35s ease, width .35s ease; }
+.sign.in { opacity: .82; transform: none; }
+.sign.next { width: 128px; opacity: 1; color: var(--amber); border-color: var(--amber); }
+.sign.next.k-pinch { color: #ffd23f; border-color: #ffd23f; }
+.sign.next.k-exit, .sign.next.k-entry { color: var(--cyan); border-color: var(--cyan); }
+.sign.now { background: rgba(255,181,71,.2); }
+.sign.out { opacity: 0 !important; transform: translateY(-10px) scale(.94) !important; }
+.sign svg { width: 44px; height: 36px; }
+.sg-l { font-family: var(--display); font-weight: 700; font-size: 11px; letter-spacing: .12em; margin-top: 4px; white-space: nowrap; }
+.sg-a { font-size: 10px; letter-spacing: .16em; opacity: .85; white-space: nowrap; margin-top: 1px; }
+.sg-t { font-family: var(--mono); font-size: 16px; color: #fff; margin-top: 3px; }
+@media (max-width: 640px) {
+  #signs { top: calc(138px + var(--safe-t)); gap: 6px; }
+  .sign { width: 86px; padding: 6px 4px; }
+  .sign.next { width: 100px; }
+  .sign svg { width: 34px; height: 28px; }
+  .sg-l { font-size: 9px; letter-spacing: .08em; }
+  .sg-a { font-size: 9px; letter-spacing: .1em; }
+  .sg-t { font-size: 13px; }
+}
 #btn-bank { position: absolute; left: calc(22px + var(--safe-l)); bottom: calc(64px + var(--safe-b)); pointer-events: auto; width: 88px; height: 88px; border-radius: 50%;
   font-family: var(--display); font-weight: 700; letter-spacing: .12em; font-size: 13px; color: #fff; touch-action: none;
   background: radial-gradient(circle, rgba(255,181,71,.3), rgba(255,181,71,.07) 70%); border: 2px solid rgba(255,181,71,.8); }
@@ -139,8 +157,6 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 #ew-t, #ew-b { left: 0; right: 0; height: 22vh; }
 #ew-t { top: 0; background: linear-gradient(180deg, rgba(255,70,30,.5), transparent); }
 #ew-b { bottom: 0; background: linear-gradient(0deg, rgba(255,70,30,.5), transparent); }
-#radar { position: absolute; right: calc(16px + var(--safe-r)); bottom: calc(16px + var(--safe-b)); width: 140px; height: auto; opacity: .92; }
-@media (max-width: 640px), (max-height: 520px) { #radar { width: 96px; } }
 
 /* ================= BANNER ================= */
 #banner { position: fixed; left: 0; right: 0; top: 36%; z-index: 6; text-align: center; pointer-events: none; opacity: 0; padding: 0 16px; }
@@ -243,7 +259,7 @@ kbd { display: inline-block; font-family: var(--mono); font-size: 11px; padding:
 .settings input:checked + .tog::after { transform: translateX(20px); background: var(--amber); }
 .settings input:focus-visible + .tog { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .seg { display: flex; border: 1px solid rgba(201,209,219,.3); }
-.seg button { padding: 5px 10px; font-size: 12px; letter-spacing: .12em; color: var(--steel-dim); }
+.seg button { padding: 5px 9px; font-size: 12px; letter-spacing: .12em; color: var(--steel-dim); }
 .seg button.on { background: var(--amber); color: var(--ink); }
 
 #loading { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: var(--ink); color: var(--amber); letter-spacing: .3em; font-size: 12px; transition: opacity .6s; }

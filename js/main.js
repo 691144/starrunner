@@ -11,20 +11,26 @@ const store = {
 
 const coarse = matchMedia('(hover: none) and (pointer: coarse)').matches;
 const settings = Object.assign({
-  sfx: true, music: true, blur: true, invertY: false, quality: coarse ? 'medium' : 'high',
+  sfx: true, music: true, blur: 'med', invertY: false, quality: coarse ? 'medium' : 'high',
 }, store.get('settings', {}));
+if (typeof settings.blur === 'boolean') settings.blur = settings.blur ? 'med' : 'off';   // older saves: on/off
 let diffKey = store.get('diff', 'pilot');
 let records = store.get('records', {}); // { pilot: {score, sector}, ... }
 
 // ---------------- HUD ----------------
-const SEG = 20;
+// shield bar: one segment per 10 points of capacity, so the bar grows as capacity builds up
 const shieldBar = $('h-shield');
-for (let i = 0; i < SEG; i++) shieldBar.appendChild(document.createElement('b'));
-const segs = [...shieldBar.children];
+let segs = [], segN = 0;
+function buildSegs(n) {
+  shieldBar.textContent = '';
+  for (let i = 0; i < n; i++) shieldBar.appendChild(document.createElement('b'));
+  segs = [...shieldBar.children];
+  segN = n;
+}
 const cache = {};
 const setText = (el, key, v) => { if (cache[key] !== v) { cache[key] = v; el.textContent = v; } };
 const ew = [$('ew-l'), $('ew-r'), $('ew-t'), $('ew-b')];
-const radarCv = $('radar'), rctx = radarCv.getContext('2d');
+const signsEl = $('signs'), signEls = new Map();
 let bannerTimer = 0;
 
 const hud = {
@@ -41,15 +47,19 @@ const hud = {
     setText($('h-sector'), 'sector', `SECTOR ${String(s.sector).padStart(2, '0')} · ${s.sectorName}`);
     const pct = Math.round(s.progress * 1000) / 10;
     if (cache.prog !== pct) { cache.prog = pct; $('h-progress').style.width = pct + '%'; }
+    const max = s.shieldMax || 100;
+    const n = Math.round(max / 10);
+    if (n !== segN) { buildSegs(n); cache.shield = null; }
     const sh = Math.max(0, Math.round(s.shield));
     if (cache.shield !== sh) {
       cache.shield = sh;
-      $('h-shield-num').textContent = sh;
-      const on = Math.ceil((sh / 100) * SEG);
+      $('h-shield-num').textContent = `${sh} / ${max}`;
+      const on = Math.ceil(sh / 10);
       segs.forEach((b, i) => b.classList.toggle('off', i >= on));
-      shieldBar.classList.toggle('warn', sh <= 50 && sh > 25);
-      shieldBar.classList.toggle('crit', sh <= 25);
-      $('damage-edge').classList.toggle('low', sh <= 25 && sh > 0);
+      const r = sh / max;
+      shieldBar.classList.toggle('warn', r <= 0.5 && r > 0.25);
+      shieldBar.classList.toggle('crit', r <= 0.25);
+      $('damage-edge').classList.toggle('low', r <= 0.25 && sh > 0);
     }
     const inv = !!s.invuln;
     if (cache.inv !== inv) { cache.inv = inv; document.querySelector('.shield').classList.toggle('inv', inv); }
@@ -84,19 +94,30 @@ const hud = {
       if (cache['e' + i] !== o) { cache['e' + i] = o; ew[i].style.opacity = o; }
     }
   },
-  radar(r) { drawRadar(r); },
-  prompt(kind) {
-    const el = $('prompt');
-    const touch = input.device === 'touch';
-    const text = {
-      hump: 'RAISED FLOOR · CLIMB',
-      tunnel: 'TUNNEL · STAY LOW',
-      shoulder: 'WALL IN · SHIFT OVER',
-      pinch: touch ? 'HOLD BANK · TURN SIDEWAYS' : 'HOLD CLICK / SPACE · TURN SIDEWAYS',
-    }[kind] || '';
-    if (text) el.textContent = text;
-    el.classList.toggle('on', !!text);
-    el.classList.toggle('gold', kind === 'pinch');
+  // floating warning signs for the next hazards: steady, fade in/out, countdown to the hazard
+  signs(list) {
+    const seen = new Set();
+    list.forEach((g, i) => {
+      let el = signEls.get(g.id);
+      if (!el) {
+        el = makeSign(g);
+        signsEl.appendChild(el);
+        signEls.set(g.id, el);
+        requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('in')));
+      }
+      seen.add(g.id);
+      el.style.order = i;
+      el.classList.toggle('next', i === 0);
+      el.classList.toggle('now', g.t <= 0);
+      const txt = g.t <= 0 ? 'NOW' : g.t.toFixed(1) + 's';
+      if (el._t !== txt) { el._t = txt; el.querySelector('.sg-t').textContent = txt; }
+    });
+    for (const [id, el] of signEls) {
+      if (seen.has(id)) continue;
+      signEls.delete(id);
+      el.classList.add('out');
+      setTimeout(() => el.remove(), 450);
+    }
   },
   paused(p) { show('screen-pause', p); },
   gameOver(st) {
@@ -118,41 +139,23 @@ const hud = {
   },
 };
 
-// ---------------- course radar ----------------
-function drawRadar(r) {
-  const W = 300, TOPH = 300, SY0 = 320, SH = 200, c = rctx;
-  c.clearRect(0, 0, W, 520);
-  c.fillStyle = 'rgba(4,7,11,.62)';
-  c.fillRect(0, 0, W, TOPH); c.fillRect(0, SY0, W, SH);
-  c.strokeStyle = 'rgba(255,181,71,.35)'; c.lineWidth = 2;
-  c.strokeRect(1, 1, W - 2, TOPH - 2); c.strokeRect(1, SY0 + 1, W - 2, SH - 2);
-  c.font = '18px "Share Tech Mono", monospace'; c.fillStyle = 'rgba(255,181,71,.8)';
-  c.fillText('COURSE', 12, 24); c.fillText('PROFILE', 12, SY0 + 24);
-
-  const n = r.n, sx = 3.3, bot = TOPH - 26, top = 34, dy = (bot - top) / (n - 1);
-  const cl = (v, a, b) => Math.max(a, Math.min(b, v));
-  const py = i => bot - i * dy;
-  const wx = v => cl(W / 2 + v * sx, 3, W - 3);
-  c.beginPath();
-  for (let i = 0; i < n; i++) c.lineTo(wx(r.lft[i]), py(i));
-  for (let i = n - 1; i >= 0; i--) c.lineTo(wx(r.rgt[i]), py(i));
-  c.closePath();
-  c.fillStyle = 'rgba(111,230,255,.10)'; c.fill();
-  c.strokeStyle = 'rgba(255,181,71,.9)'; c.lineWidth = 3;
-  for (const arr of [r.lft, r.rgt]) { c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(wx(arr[i]), py(i)); c.stroke(); }
-  c.fillStyle = '#fff';
-  c.beginPath(); c.moveTo(W / 2, bot - 8); c.lineTo(W / 2 - 9, bot + 12); c.lineTo(W / 2 + 9, bot + 12); c.closePath(); c.fill();
-
-  // side profile: ship at left, distance ahead to the right (floor and ceiling/roof)
-  const sc = 3.2, my = SY0 + SH / 2, x0 = 34, dx = (W - 16 - x0) / (n - 1);
-  const vy = y => cl(my - (y - r.shipY) * sc, SY0 + 4, SY0 + SH - 4);
-  c.beginPath();
-  for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(r.cei[i]));
-  for (let i = n - 1; i >= 0; i--) c.lineTo(x0 + i * dx, vy(r.flo[i]));
-  c.closePath(); c.fillStyle = 'rgba(111,230,255,.10)'; c.fill();
-  c.strokeStyle = 'rgba(255,181,71,.9)'; c.lineWidth = 3;
-  for (const arr of [r.cei, r.flo]) { c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(arr[i])); c.stroke(); }
-  c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x0 - 4, my); c.lineTo(x0 - 16, my - 8); c.lineTo(x0 - 16, my + 8); c.closePath(); c.fill();
+// ---------------- hazard signs ----------------
+const SIGN = {
+  hump: { l: 'RAISED FLOOR', a: () => 'CLIMB', svg: '<path d="M6 4V36H14Q24 20 34 36H42V4"/><path d="M24 15V5M20 9L24 5L28 9"/>' },
+  tunnel: { l: 'TUNNEL', a: () => 'STAY LOW', svg: '<path d="M6 36V12H42V36"/><path d="M2 12H46" stroke-width="5"/><path d="M24 19V31M20 27L24 31L28 27"/>' },
+  pinch: { l: 'SIDEWAYS GAP', a: () => (input.device === 'touch' ? 'HOLD BANK' : 'HOLD CLICK'), svg: '<path d="M5 4L19 18V36"/><path d="M43 4L29 18V36"/><path d="M24 21V35" stroke-width="3.5"/><path d="M21 28H27"/>' },
+  shoulder: { l: 'WALL IN', a: g => (g.side < 0 ? 'SHIFT RIGHT' : 'SHIFT LEFT'), svg: '<path d="M6 4V36"/><path d="M42 4L30 16V36"/><path d="M24 26H12M16 22L12 26L16 30"/>' },
+  exit: { l: 'OPEN SPACE', a: () => 'FREE FLIGHT', svg: '<path d="M24 5L27 17L39 20L27 23L24 35L21 23L9 20L21 17Z"/>' },
+  entry: { l: 'NEXT CORRIDOR', a: () => 'LINE UP', svg: '<path d="M6 36V8H42V36"/><path d="M16 36V17H32V36"/><path d="M24 22V31"/>' },
+};
+function makeSign(g) {
+  const d = SIGN[g.kind] || SIGN.hump;
+  const el = document.createElement('div');
+  el.className = 'sign k-' + g.kind;
+  const flip = g.kind === 'shoulder' && g.side < 0 ? ' transform="translate(48 0) scale(-1 1)"' : '';
+  el.innerHTML = `<svg viewBox="0 0 48 40" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"${flip}>${d.svg}</g></svg>`
+    + `<div class="sg-l">${d.l}</div><div class="sg-a">${d.a(g)}</div><div class="sg-t"></div>`;
+  return el;
 }
 
 // ---------------- core objects ----------------
@@ -258,7 +261,12 @@ const bindToggle = (id, key, apply) => {
 };
 bindToggle('s-sfx', 'sfx', v => sound.setSfx(v));
 bindToggle('s-music', 'music', v => sound.setMusic(v));
-bindToggle('s-blur', 'blur', v => game.applySettings({ blur: v }));
+const bBtns = [...document.querySelectorAll('#s-blur button')];
+const markB = () => bBtns.forEach(b => b.classList.toggle('on', b.dataset.b === settings.blur));
+bBtns.forEach(b => b.addEventListener('click', () => {
+  settings.blur = b.dataset.b; store.set('settings', settings); markB(); game.applySettings({ blur: settings.blur }); sound.click();
+}));
+markB();
 bindToggle('s-invert', 'invertY', v => game.applySettings({ invertY: v }));
 const qBtns = [...document.querySelectorAll('#s-quality button')];
 const markQ = () => qBtns.forEach(b => b.classList.toggle('on', b.dataset.q === settings.quality));
