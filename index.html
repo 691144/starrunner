@@ -53,6 +53,8 @@
       </div>
     </div>
     <div id="callouts"></div>
+    <div id="prompt" aria-live="polite"></div>
+    <button id="btn-bank" class="touch-only" aria-label="Hold to turn sideways">BANK</button>
     <canvas id="radar" width="300" height="520" aria-hidden="true"></canvas>
   </div>
 
@@ -108,8 +110,8 @@
       <div class="big-score" id="o-score">0</div>
       <dl class="stats">
         <div><dt>SECTOR</dt><dd id="o-sector">1</dd></div>
-        <div><dt>RINGS</dt><dd id="o-rings">0</dd></div>
-        <div><dt>PERFECT</dt><dd id="o-perfect">0</dd></div>
+        <div><dt>CLEARED</dt><dd id="o-rings">0</dd></div>
+        <div><dt>BEST MULT</dt><dd id="o-perfect">×1</dd></div>
         <div><dt>DISTANCE</dt><dd id="o-dist">0</dd></div>
       </dl>
       <div class="record small" id="o-best"></div>
@@ -130,20 +132,23 @@
           <h3>Controls</h3>
           <table class="keys">
             <tr><td><kbd>Mouse</kbd></td><td>Flight stick: move toward a side of the screen to turn that way</td></tr>
+            <tr><td><kbd>Hold Click</kbd> <kbd>Space</kbd></td><td>Turn the ship sideways (knife-edge) to fit narrow gaps</td></tr>
             <tr><td><kbd>WASD</kbd> <kbd>←↑↓→</kbd></td><td>Steer</td></tr>
             <tr><td><kbd>Drag</kbd></td><td>Touch: drag anywhere as a floating stick</td></tr>
-            <tr><td><kbd>Gamepad</kbd></td><td>Left stick or D-pad</td></tr>
+            <tr><td><kbd>BANK</kbd></td><td>Touch: hold the button to turn sideways</td></tr>
+            <tr><td><kbd>Gamepad</kbd></td><td>Stick to steer, A / triggers to bank</td></tr>
             <tr><td><kbd>P</kbd> <kbd>Esc</kbd></td><td>Pause</td></tr>
           </table>
         </div>
         <div>
           <h3>The run</h3>
           <ul class="tips">
-            <li><b>The canyon winds, climbs and dives.</b> The ship does not steer itself: you must follow the course.</li>
-            <li><b>The radar</b> (bottom right) shows the canyon ahead: top-down above, side view below.</li>
-            <li><b>Scraping stone</b> drains your shield and breaks your multiplier. Walls, floor and the rim above all count.</li>
-            <li><b>Rings</b> mark a racing line. Fly through them to build a multiplier up to ×8; the centre of a ring scores <span class="c-cyan">PERFECT</span>.</li>
-            <li><b>Speed never stops climbing</b>, and each sector the canyon narrows and the bends sharpen. <span class="c-cyan">Cyan rings</span> restore 20 shield; every sector gate restores 25.</li>
+            <li><b>The canyon winds, climbs and dives.</b> The ship doesn't steer itself: follow the course.</li>
+            <li><b>Raised floors</b> force you up. <b>Tunnels</b> roof the canyon over: stay low, then burst back out.</li>
+            <li><b>Pinch gaps</b> are too narrow for your wings. Hold click to turn <b>sideways</b> and slip through.</li>
+            <li><b>Scraping stone</b> (walls, floor, roof, rim) drains shield and breaks your multiplier.</li>
+            <li><b>Clean flying</b> builds a multiplier up to ×8. Clearing a hazard cleanly scores and repairs shield; every sector gate repairs more.</li>
+            <li><b>The radar</b> (bottom right) shows the canyon ahead, top-down and side-on.</li>
           </ul>
         </div>
       </div>

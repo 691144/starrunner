@@ -6,6 +6,9 @@ export class Input {
   constructor() {
     this.keys = new Set();
     this.mouse = { nx: 0, ny: 0 };
+    this.mouseDown = false;
+    this.bankTouch = false;
+    this.gpBank = false;
     this.touch = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
     this.device = 'keyboard';
     this.pausePressed = false;
@@ -21,10 +24,11 @@ export class Input {
       this.device = 'keyboard';
     });
     window.addEventListener('keyup', e => this.keys.delete(e.code));
-    window.addEventListener('blur', () => { this.keys.clear(); this.touch.id = null; this.touch.x = this.touch.y = 0; });
+    window.addEventListener('blur', () => { this.keys.clear(); this.mouseDown = false; this.bankTouch = false; this.touch.id = null; this.touch.x = this.touch.y = 0; });
 
     window.addEventListener('pointerdown', e => {
-      if (isUI(e) || e.pointerType === 'mouse') return;
+      if (isUI(e)) return;
+      if (e.pointerType === 'mouse') { if (e.button === 0) this.mouseDown = true; return; }
       if (this.touch.id === null) {
         Object.assign(this.touch, { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: 0, y: 0 });
         this.device = 'touch';
@@ -50,10 +54,26 @@ export class Input {
       t.y = clamp(-dy / R, -1, 1);
     });
     const up = e => {
+      if (e.pointerType === 'mouse' && e.button === 0) this.mouseDown = false;
       if (e.pointerId === this.touch.id) { this.touch.id = null; this.touch.x = this.touch.y = 0; }
     };
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
+  }
+
+  bindBankButton(el) {
+    const on = e => { e.preventDefault(); e.stopPropagation(); this.bankTouch = true; try { el.setPointerCapture(e.pointerId); } catch { /* noop */ } };
+    const off = e => { e.preventDefault(); this.bankTouch = false; };
+    el.addEventListener('pointerdown', on);
+    el.addEventListener('pointerup', off);
+    el.addEventListener('pointercancel', off);
+    el.addEventListener('lostpointercapture', off);
+  }
+
+  // hold to turn the ship sideways (knife-edge)
+  bank() {
+    const k = this.keys;
+    return this.mouseDown || this.bankTouch || this.gpBank || k.has('Space') || k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyB');
   }
 
   takePause() { const p = this.pausePressed; this.pausePressed = false; return p; }
@@ -62,13 +82,15 @@ export class Input {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const gp = pads && [...pads].find(p => p && p.connected);
     this.gpX = this.gpY = 0;
+    this.gpBank = false;
     if (!gp) return;
     const dz = v => (Math.abs(v) < 0.12 ? 0 : v);
     const x = dz(gp.axes[0] || 0), y = dz(gp.axes[1] || 0);
     const dl = gp.buttons[14]?.pressed ? -1 : gp.buttons[15]?.pressed ? 1 : 0;
     const du = gp.buttons[12]?.pressed ? 1 : gp.buttons[13]?.pressed ? -1 : 0;
     this.gpX = x || dl; this.gpY = -y || du;
-    if (this.gpX || this.gpY) this.device = 'gamepad';
+    this.gpBank = !!(gp.buttons[0]?.pressed || gp.buttons[1]?.pressed || gp.buttons[6]?.pressed || gp.buttons[7]?.pressed || gp.buttons[4]?.pressed || gp.buttons[5]?.pressed);
+    if (this.gpX || this.gpY || this.gpBank) this.device = 'gamepad';
     const start = !!gp.buttons[9]?.pressed;
     if (start && !this._gpStartPrev) this.pausePressed = true;
     this._gpStartPrev = start;

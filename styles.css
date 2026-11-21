@@ -119,6 +119,18 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .touch-only { display: none; }
 @media (hover: none) and (pointer: coarse) { .touch-only { display: block; } .menu-item .key { display: none; } }
 
+/* steady (non-flashing) approach prompt + bank button */
+#prompt { position: absolute; left: 50%; bottom: calc(86px + var(--safe-b)); transform: translateX(-50%); padding: 8px 18px; font-family: var(--display); font-weight: 700;
+  font-size: clamp(12px, 1.7vw, 16px); letter-spacing: .2em; color: var(--steel); background: rgba(4,7,11,.6); border: 1px solid rgba(201,209,219,.3);
+  opacity: 0; transition: opacity .6s ease; white-space: nowrap; pointer-events: none; }
+#prompt.on { opacity: 1; }
+@media (max-width: 640px) { #prompt { bottom: calc(176px + var(--safe-b)); max-width: 88vw; white-space: normal; text-align: center; font-size: 12px; } }
+#prompt.gold { color: var(--amber); border-color: var(--amber); }
+#btn-bank { position: absolute; left: calc(22px + var(--safe-l)); bottom: calc(64px + var(--safe-b)); pointer-events: auto; width: 88px; height: 88px; border-radius: 50%;
+  font-family: var(--display); font-weight: 700; letter-spacing: .12em; font-size: 13px; color: #fff; touch-action: none;
+  background: radial-gradient(circle, rgba(255,181,71,.3), rgba(255,181,71,.07) 70%); border: 2px solid rgba(255,181,71,.8); }
+#btn-bank:active { background: radial-gradient(circle, rgba(255,181,71,.65), rgba(255,181,71,.2) 70%); }
+
 /* canyon-edge proximity warnings */
 .ew { position: fixed; z-index: 4; pointer-events: none; opacity: 0; }
 #ew-l, #ew-r { top: 0; bottom: 0; width: 22vw; }

@@ -85,6 +85,19 @@ const hud = {
     }
   },
   radar(r) { drawRadar(r); },
+  prompt(kind) {
+    const el = $('prompt');
+    const touch = input.device === 'touch';
+    const text = {
+      hump: 'RAISED FLOOR · CLIMB',
+      tunnel: 'TUNNEL · STAY LOW',
+      shoulder: 'WALL IN · SHIFT OVER',
+      pinch: touch ? 'HOLD BANK · TURN SIDEWAYS' : 'HOLD CLICK / SPACE · TURN SIDEWAYS',
+    }[kind] || '';
+    if (text) el.textContent = text;
+    el.classList.toggle('on', !!text);
+    el.classList.toggle('gold', kind === 'pinch');
+  },
   paused(p) { show('screen-pause', p); },
   gameOver(st) {
     const prev = records[st.difficulty];
@@ -92,8 +105,8 @@ const hud = {
     if (isNew) { records[st.difficulty] = { score: st.score, sector: st.sector }; store.set('records', records); }
     $('o-score').textContent = st.score.toLocaleString();
     $('o-sector').textContent = st.sector;
-    $('o-rings').textContent = st.rings;
-    $('o-perfect').textContent = st.perfects;
+    $('o-rings').textContent = st.cleared;
+    $('o-perfect').textContent = '×' + st.maxMult;
     $('o-dist').textContent = (st.distance / 1000).toFixed(1) + ' km';
     $('o-newrec').classList.toggle('hidden', !isNew || st.score === 0);
     const r = records[st.difficulty];
@@ -119,39 +132,26 @@ function drawRadar(r) {
   const n = r.n, sx = 3.3, bot = TOPH - 26, top = 34, dy = (bot - top) / (n - 1);
   const cl = (v, a, b) => Math.max(a, Math.min(b, v));
   const py = i => bot - i * dy;
+  const wx = v => cl(W / 2 + v * sx, 3, W - 3);
   c.beginPath();
-  for (let i = 0; i < n; i++) c.lineTo(cl(W / 2 + (r.rel[i] - r.half[i]) * sx, 3, W - 3), py(i));
-  for (let i = n - 1; i >= 0; i--) c.lineTo(cl(W / 2 + (r.rel[i] + r.half[i]) * sx, 3, W - 3), py(i));
+  for (let i = 0; i < n; i++) c.lineTo(wx(r.lft[i]), py(i));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(wx(r.rgt[i]), py(i));
   c.closePath();
   c.fillStyle = 'rgba(111,230,255,.10)'; c.fill();
   c.strokeStyle = 'rgba(255,181,71,.9)'; c.lineWidth = 3;
-  for (const s of [-1, 1]) {
-    c.beginPath();
-    for (let i = 0; i < n; i++) c.lineTo(cl(W / 2 + (r.rel[i] + s * r.half[i]) * sx, 3, W - 3), py(i));
-    c.stroke();
-  }
-  c.strokeStyle = 'rgba(255,255,255,.28)'; c.lineWidth = 1.5; c.setLineDash([6, 8]);
-  c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(cl(W / 2 + r.rel[i] * sx, 5, W - 5), py(i)); c.stroke(); c.setLineDash([]);
-  for (const g of r.rings) {
-    c.fillStyle = g.cell ? '#59d8ff' : '#ffb547';
-    c.beginPath(); c.ellipse(cl(W / 2 + g.x * sx, 5, W - 5), bot - g.k * dy, 8, 4, 0, 0, 7); c.fill();
-  }
+  for (const arr of [r.lft, r.rgt]) { c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(wx(arr[i]), py(i)); c.stroke(); }
   c.fillStyle = '#fff';
   c.beginPath(); c.moveTo(W / 2, bot - 8); c.lineTo(W / 2 - 9, bot + 12); c.lineTo(W / 2 + 9, bot + 12); c.closePath(); c.fill();
 
-  // side profile: ship at left, distance ahead to the right
+  // side profile: ship at left, distance ahead to the right (floor and ceiling/roof)
   const sc = 3.2, my = SY0 + SH / 2, x0 = 34, dx = (W - 16 - x0) / (n - 1);
   const vy = y => cl(my - (y - r.shipY) * sc, SY0 + 4, SY0 + SH - 4);
   c.beginPath();
-  for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(r.hi[i]));
-  for (let i = n - 1; i >= 0; i--) c.lineTo(x0 + i * dx, vy(r.lo[i]));
+  for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(r.cei[i]));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(x0 + i * dx, vy(r.flo[i]));
   c.closePath(); c.fillStyle = 'rgba(111,230,255,.10)'; c.fill();
   c.strokeStyle = 'rgba(255,181,71,.9)'; c.lineWidth = 3;
-  for (const arr of [r.hi, r.lo]) { c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(arr[i])); c.stroke(); }
-  for (const g of r.rings) {
-    c.fillStyle = g.cell ? '#59d8ff' : '#ffb547';
-    c.beginPath(); c.ellipse(x0 + g.k * dx, vy(g.y), 4, 8, 0, 0, 7); c.fill();
-  }
+  for (const arr of [r.cei, r.flo]) { c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(arr[i])); c.stroke(); }
   c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x0 - 4, my); c.lineTo(x0 - 16, my - 8); c.lineTo(x0 - 16, my + 8); c.closePath(); c.fill();
 }
 
@@ -160,6 +160,7 @@ const sound = new Sound();
 sound.sfxOn = settings.sfx;
 sound.musicOn = settings.music;
 const input = new Input();
+input.bindBankButton($('btn-bank'));
 
 let game;
 try {
@@ -229,7 +230,7 @@ window.addEventListener('keydown', e => {
   const panelOpen = !$('panel-how').classList.contains('hidden') || !$('panel-settings').classList.contains('hidden');
   if (e.code === 'Escape' && panelOpen) { closePanels(); return; }
   if (panelOpen) return;
-  if ((e.code === 'Space' || e.code === 'Enter') && !e.target.closest('button')) {
+  if ((e.code === 'Space' || e.code === 'Enter') && !e.repeat && !e.target.closest('button')) {
     if (game.state === 'menu') { e.preventDefault(); launch(); }
     else if (game.state === 'over') { e.preventDefault(); launch(); }
   }

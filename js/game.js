@@ -1,7 +1,7 @@
 // STARRUNNER core: a winding, narrowing canyon flown at ever-increasing speed.
 import * as THREE from 'three';
-import { Trench, CL } from './trench.js';
-import { Course, HW, TH, LAT, VERT, speedAt, sectorLength } from './course.js';
+import { Trench } from './trench.js';
+import { Course, HW, TH, LAT, VERT, SHIP_W, SHIP_W_BANK, SHIP_H, speedAt, sectorLength, bendMaterial, bendDepthMaterial } from './course.js';
 import { Particles, PostFX, glowSprite } from './fx.js';
 import { buildShip } from './ship.js';
 
@@ -11,9 +11,9 @@ const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
 const pad2 = n => String(n).padStart(2, '0');
 
 export const SECTORS = [
-  { name: 'OUTER CHANNEL', tip: 'Follow the canyon. Fly through the rings to build your multiplier.' },
-  { name: 'SWEEPING BENDS', tip: 'Long curves. Look ahead and lean into the turn early.' },
-  { name: 'THE NARROWS', tip: 'The walls are closing in. Stay off the stone.' },
+  { name: 'OUTER CHANNEL', tip: 'Follow the canyon. Climb over the raised floor.' },
+  { name: 'SWEEPING BENDS', tip: 'Tunnels ahead. Stay low and keep your line.' },
+  { name: 'THE NARROWS', tip: 'Gaps too narrow for your wings: hold click to turn sideways.' },
   { name: 'SERPENTINE', tip: 'Tight S-bends at speed. Smooth inputs win.' },
   { name: 'THE SQUEEZE', tip: 'The ceiling drops. Mind your height.' },
   { name: 'HYPERLANE', tip: 'The canyon barely keeps up with you.' },
@@ -84,10 +84,15 @@ export class Game {
     this.box = new THREE.BoxGeometry(1, 1, 1);
     this.darkMat = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.6, metalness: 0.55 });
     this.cyanMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 0.9, 1).multiplyScalar(3) });
-    this.ringGeo = new THREE.TorusGeometry(1, 0.05, 6, 40);
+    // tunnel roofs use their own bend mapping (slab hangs from the rim down to the tunnel underside)
+    this.roofMat = bendMaterial(new THREE.MeshStandardMaterial({ map: this.trench.greebleTex, color: 0x9aa0a8, roughness: 0.8, metalness: 0.3 }), this.course, 'roof');
+    this.roofLightMat = bendMaterial(new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.7, 0.3).multiplyScalar(3) }), this.course, 'roof');
+    this.roofDepth = bendDepthMaterial(this.course, 'roof');
+    this.stripGeoCache = new Map();
     this.gateTex = this.makeGateTexture();
 
     this.objs = [];
+    this.roofs = [];
     this.debris = [];
 
     this.speed = 70;
@@ -98,11 +103,15 @@ export class Game {
     this.flash = new THREE.Color(0, 0, 0);
     this.fovKick = 0;
     this.edge = [0, 0, 0, 0];
+    this.bank = 0;
+    this.lim = {};
+    this.promptKind = null;
+    this.maxMult = 1;
     this.radarT = 0;
     this.radar = {
       n: RADAR_N, step: RADAR_STEP,
-      rel: new Float32Array(RADAR_N), half: new Float32Array(RADAR_N), lo: new Float32Array(RADAR_N), hi: new Float32Array(RADAR_N),
-      shipY: 0, rings: [],
+      lft: new Float32Array(RADAR_N), rgt: new Float32Array(RADAR_N), flo: new Float32Array(RADAR_N), cei: new Float32Array(RADAR_N),
+      shipY: 0,
     };
     this.c1 = {}; this.c2 = {}; this.c3 = {};
     this.tmp = new THREE.Vector3();
@@ -242,18 +251,16 @@ export class Game {
     this.score = 0;
     this.shield = 100;
     this.combo = 0;
-    this.rings = 0;
-    this.perfects = 0;
+    this.cleared = 0;
+    this.maxMult = 1;
+    this.bank = 0;
+    this.promptKind = null;
     this.sector = 1;
     this.invuln = 2.0;
     this.distance = 0;
     this.cleanT = 0;
     this.scrapeSfxT = 0;
     this.wasScraping = false;
-    this.ringCount = 0;
-    this.ringPh = rand(0, 6.28);
-    this.ringPh2 = rand(0, 6.28);
-    this.nextRingZ = -190;
     this.secStart = 0;
     this.secEnd = -sectorLength(1);
     this.gateN = 1;
@@ -261,7 +268,7 @@ export class Game {
     this.gateSpawned = false;
     this.lineData.forEach(l => { l.z = 1e9; });
     this.ship.visible = true;
-    this.trench.setAccent(ACCENTS[0]);
+    this.setAccent(ACCENTS[0]);
     this.particles.clear();
     this.snapCamera();
     const info = sectorInfo(1);
@@ -279,12 +286,20 @@ export class Game {
     this.placeShip(this.ship.position.z);
     this.state = 'menu';
     this.ship.visible = true;
-    this.trench.setAccent(ACCENTS[0]);
+    this.setAccent(ACCENTS[0]);
     this.hud.edges([0, 0, 0, 0]);
     this.sound.stopMusic();
   }
 
+  setAccent(hex) {
+    this.trench.setAccent(hex);
+    this.roofLightMat.color.set(hex).multiplyScalar(3);
+  }
+
   clearWorld() {
+    for (const m of this.roofs || []) this.disposeRoof(m);
+    this.roofs = [];
+    this.hud.prompt(null);
     for (const o of this.objs) this.disposeObj(o);
     this.objs.length = 0;
     for (const d of this.debris) this.scene.remove(d.mesh);
@@ -328,18 +343,33 @@ export class Game {
     s.y += this.vy * dt;
   }
 
+  // the ship's current extents (wings level -> knife-edge when banked)
+  extents() {
+    const b = this.bank;
+    return { w: SHIP_W + (SHIP_W_BANK - SHIP_W) * b, h: SHIP_H + (SHIP_W - SHIP_H) * b };
+  }
+
   // menu / death / game-over backdrop: the ship flies the course by itself
   updateCruise(dt) {
     const s = this.ship.position;
     const c = this.course;
     c.sync(s.z);
-    const ahead = c.at(s.z - this.speed * 0.4, this.c2);
     const here = c.at(s.z, this.c1);
-    const ty = here.y + 13 + Math.sin(this.time * 0.6) * 4;
-    this.steer(clamp((ahead.x - s.x) * 2.4 / LAT, -1, 1), clamp((ty - s.y) * 2.4 / VERT, -1, 1), dt);
+    const ahead = c.at(s.z - this.speed * 0.4, this.c2);
+    const far = c.at(s.z - this.speed * 0.9, this.c3);
+    // bank when a pinch is coming: the corridor is narrower than the ship
+    const tight = Math.min(here.rw - here.lw, ahead.rw - ahead.lw, far.rw - far.lw) < 2 * SHIP_W + 1.4;
+    this.bank = damp(this.bank, tight ? 1 : 0, 14, dt);
+    const ex = this.extents();
+    const L = c.limits(ahead, ex.w, ex.h, this.lim);
+    const tx = (L.l + L.r) / 2, ty = clamp(here.floor + 13 + Math.sin(this.time * 0.6) * 4, L.lo, L.hi);
+    this.steer(clamp((tx - s.x) * 2.4 / LAT, -1, 1), clamp((ty - s.y) * 2.4 / VERT, -1, 1), dt);
     this.speed = damp(this.speed, this.state === 'menu' ? 74 : 46, 1.2, dt);
     s.z -= this.speed * dt;
+    const hc = c.at(s.z, this.c1);
+    this.clampToCanyon(hc);
     this.updateObjects(dt, false, s.z);
+    this.updateFeatures(false);
     if (this.state === 'dying') {
       this.dieT += dt;
       if (this.dieT > 2.4) { this.state = 'over'; this.hud.gameOver(this.stats()); }
@@ -355,7 +385,9 @@ export class Game {
 
     // ---- flight
     const st = this.input.steer(this.settings.invertY);
-    const px = s.x, py = s.y, pz = s.z;
+    const held = this.input.bank();
+    if (held && this.bank < 0.1) this.sound.whoosh();
+    this.bank = damp(this.bank, held ? 1 : 0, 13, dt);
     this.steer(st.x, st.y, dt);
     this.speed = damp(this.speed, speedAt(d) * this.diff.speed, 1.6, dt);
     s.z -= this.speed * dt;
@@ -367,17 +399,17 @@ export class Game {
     this.contact(dt, cc);
 
     const mult = this.mult();
+    if (mult > this.maxMult) this.maxMult = mult;
     this.score += this.speed * dt * 0.1 * mult;
     this.cleanT += dt;
-    if (this.cleanT >= 6) {
-      this.cleanT -= 6;
-      const pts = 150 * this.sector * mult;
-      this.score += pts;
-      this.hud.callout(`CLEAN LINE +${pts}`, 'gold');
+    if (this.cleanT >= 4) {
+      this.cleanT -= 4;
+      this.combo++;
     }
 
-    this.spawnAhead(d);
-    this.updateObjects(dt, true, pz, px, py);
+    this.spawnAhead();
+    this.updateObjects(dt, true, s.z);
+    this.updateFeatures(true);
 
     if (this.shield < 30 && this.state === 'playing') {
       this.alarmT = (this.alarmT || 0) - dt;
@@ -389,45 +421,59 @@ export class Game {
       score: Math.floor(this.score), mult, speed: Math.round(this.speed * 4.2), shield: this.shield,
       progress: prog, sector: this.sector, sectorName: sectorInfo(this.sector).name, invuln: this.invuln > 0,
     });
-    this.updateRadar(dt, cc);
+    this.updateRadar(dt);
     this.sound.engine(this.speed / 240, 0.6);
   }
 
   mult() { return 1 + Math.min(7, Math.floor(this.combo / 4)); }
 
   // ---------------------------------------------------------------- canyon collision
+  // keep the ship inside the flyable corridor; returns which surfaces it is touching
+  clampToCanyon(c) {
+    const s = this.ship.position;
+    const ex = this.extents();
+    const L = this.course.limits(c, ex.w, ex.h, this.lim);
+    let hitX = 0, hitY = 0;
+    if (s.x > L.r) { s.x = L.r; hitX = 1; if (this.vx > 0) this.vx = -this.vx * 0.25; }
+    else if (s.x < L.l) { s.x = L.l; hitX = -1; if (this.vx < 0) this.vx = -this.vx * 0.25; }
+    if (s.y < L.lo) { s.y = L.lo; hitY = -1; if (this.vy < 0) this.vy = -this.vy * 0.2; }
+    else if (s.y > L.hi) { s.y = L.hi; hitY = 1; if (this.vy > 0) this.vy = -this.vy * 0.2; }
+    // a squeeze means the ship physically cannot fit: that is always a scrape
+    if (L.sqX && !hitX) hitX = s.x >= c.x + (c.lw + c.rw) / 2 ? 1 : -1;
+    if (L.sqY && !hitY) hitY = 1;
+    return { hitX, hitY, L };
+  }
+
   contact(dt, c) {
     const s = this.ship.position;
-    const lim = this.course.limX(c), lo = this.course.yLo(c), hi = this.course.yHi(c);
-    const rel = s.x - c.x;
-    let hitX = 0, hitY = 0;
-    if (rel > lim) { s.x = c.x + lim; hitX = 1; if (this.vx > 0) this.vx = -this.vx * 0.25; }
-    else if (rel < -lim) { s.x = c.x - lim; hitX = -1; if (this.vx < 0) this.vx = -this.vx * 0.25; }
-    if (s.y < lo) { s.y = lo; hitY = -1; if (this.vy < 0) this.vy = -this.vy * 0.2; }
-    else if (s.y > hi) { s.y = hi; hitY = 1; if (this.vy > 0) this.vy = -this.vy * 0.2; }
+    const { hitX, hitY, L } = this.clampToCanyon(c);
 
     // proximity warning (0..1 per edge: left, right, top, bottom)
-    const m = 3.2;
-    this.edge[0] = clamp(1 - (lim + (s.x - c.x)) / m, 0, 1);
-    this.edge[1] = clamp(1 - (lim - (s.x - c.x)) / m, 0, 1);
-    this.edge[2] = clamp(1 - (hi - s.y) / m, 0, 1);
-    this.edge[3] = clamp(1 - (s.y - lo) / m, 0, 1);
+    // (scaled to the corridor so a deliberately tight gap doesn't keep the screen glowing red)
+    const mx = clamp((L.r - L.l) * 0.3, 0.7, 3.0), my = clamp((L.hi - L.lo) * 0.3, 0.7, 3.0);
+    this.edge[0] = clamp(1 - (s.x - L.l) / mx, 0, 1) * 0.8;
+    this.edge[1] = clamp(1 - (L.r - s.x) / mx, 0, 1) * 0.8;
+    this.edge[2] = clamp(1 - (L.hi - s.y) / my, 0, 1) * 0.8;
+    this.edge[3] = clamp(1 - (s.y - L.lo) / my, 0, 1) * 0.8;
     this.hud.edges(this.edge);
 
     const scraping = !!(hitX || hitY);
     if (scraping) {
       this.cleanT = 0;
-      if (this.combo) { this.combo = 0; }
+      this.combo = 0;
+      this.scrapedNow = true;
       if (this.invuln <= 0) {
         if (!this.wasScraping) this.damage(7, 'impact');
-        this.shield -= 30 * dt * this.diff.dmg;
+        // forcing a ship through a gap it physically can't fit is far worse than brushing a wall
+        this.shield -= ((L.sqX || L.sqY) ? 110 : 30) * dt * this.diff.dmg;
         this.shake = Math.max(this.shake, 0.45);
         this.aberr = Math.max(this.aberr, 0.007);
         if (this.shield <= 0) { this.shield = 0; this.die(); return; }
       }
       this.scrapeSfxT -= dt;
       if (this.scrapeSfxT <= 0) { this.sound.spark(); this.scrapeSfxT = 0.07; }
-      const p = this.tmp.set(s.x + hitX * 2, s.y + hitY * 0.7, s.z - 1.2);
+      const ex = this.extents();
+      const p = this.tmp.set(s.x + hitX * (ex.w + 0.2), s.y + hitY * (ex.h + 0.1), s.z - 1.2);
       this.particles.emit(p, {
         count: 5, speed: 16, c0: 0xffffff, c1: 0xff7a20, life: 0.4, size: 0.5, drag: 1.2, grav: 18,
         vel: this.tmp2.set(-hitX * 6, -hitY * 4, -this.speed * 0.35),
@@ -442,7 +488,7 @@ export class Game {
     this.combo = 0;
     this.shake = Math.max(this.shake, 1);
     this.aberr = 0.014;
-    this.flash.setRGB(0.55, 0.06, 0.02);
+    this.flash.setRGB(0.28, 0.04, 0.01);
     this.sound.hit();
     this.hud.damage();
     if (navigator.vibrate) try { navigator.vibrate(50); } catch { /* noop */ }
@@ -463,48 +509,14 @@ export class Game {
   }
 
   stats() {
-    return { score: Math.floor(this.score), sector: this.sector, rings: this.rings, perfects: this.perfects, distance: Math.floor(this.distance), difficulty: this.diffKey };
+    return { score: Math.floor(this.score), sector: this.sector, cleared: this.cleared, maxMult: this.maxMult, distance: Math.floor(this.distance), difficulty: this.diffKey };
   }
 
-  // ---------------------------------------------------------------- course objects: rings + gates
-  spawnAhead(d) {
+  // ---------------------------------------------------------------- gates, features, tunnel roofs
+  spawnAhead() {
     const s = this.ship.position;
     const horizon = s.z - 560;
-    let guard = 0;
-    while (this.nextRingZ > horizon && guard++ < 12) {
-      if (Math.abs(this.nextRingZ - this.gateZ) < 50) this.nextRingZ = this.gateZ - 60;
-      this.spawnRing(this.nextRingZ);
-      this.nextRingZ -= clamp(this.speed * 0.5, 44, 110);
-    }
     if (!this.gateSpawned && this.gateZ > horizon) { this.gateSpawned = true; this.spawnGate(this.gateZ, this.gateN); }
-  }
-
-  orient(group, z) {
-    const a = this.course.at(z, this.c2), b = this.course.at(z - 6, this.c3);
-    group.rotation.y = Math.atan2(a.x - b.x, 6);
-    return a;
-  }
-
-  spawnRing(z) {
-    const course = this.course;
-    const c = course.at(z, this.c1);
-    const lim = course.limX(c), lo = course.yLo(c), hi = course.yHi(c);
-    const rw = Math.min(Math.max(3.4, 6.6 - 0.32 * c.d), lim * 0.85);
-    const rh = Math.min(Math.max(2.6, 4.8 - 0.26 * c.d), (hi - lo) * 0.4);
-    const offX = Math.sin(z * 0.0068 + this.ringPh) * Math.max(0, lim - rw - 0.8) * 0.85;
-    const mid = (lo + hi) / 2;
-    const offY = Math.sin(z * 0.0049 + this.ringPh2) * Math.max(0, (hi - lo) / 2 - rh - 0.8) * 0.8;
-    const cell = this.ringCount % 8 === 7;
-    this.ringCount++;
-    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(cell ? 0x59d8ff : 0xffb040).multiplyScalar(1.7), transparent: true, fog: false });
-    const mesh = new THREE.Mesh(this.ringGeo, mat);
-    mesh.scale.set(rw, rh, 1);
-    const g = new THREE.Group();
-    g.add(mesh);
-    g.position.set(c.x + offX, mid + offY, z);
-    g.rotation.y = Math.atan2(c.x - course.at(z - 6, this.c3).x, 6);
-    this.scene.add(g);
-    this.objs.push({ type: 'ring', z, x: g.position.x, y: g.position.y, w: rw, h: rh, cell, group: g, mesh, mat, base: cell ? 0x59d8ff : 0xffb040, state: 'new', t: 0 });
   }
 
   spawnGate(z, n) {
@@ -525,58 +537,93 @@ export class Game {
     this.objs.push({ type: 'gate', z, n, group: g, curtain });
   }
 
-  updateObjects(dt, live, prevZ, px, py) {
+  updateObjects(dt, live, prevZ) {
     const s = this.ship.position;
     for (let i = this.objs.length - 1; i >= 0; i--) {
       const o = this.objs[i];
       if (o.z > s.z + 70) { this.disposeObj(o); this.objs.splice(i, 1); continue; }
-
-      if (o.type === 'ring') {
-        if (!o.done && live && prevZ >= o.z && s.z < o.z) {
-          o.done = true;
-          const t = (prevZ - o.z) / Math.max(1e-6, prevZ - s.z);
-          const x = px + (s.x - px) * t, y = py + (s.y - py) * t;
-          const ex = Math.abs(x - o.x) / o.w, ey = Math.abs(y - o.y) / o.h;
-          if (ex < 1.05 && ey < 1.05) this.ringHit(o, ex < 0.4 && ey < 0.4);
-          else this.ringMiss(o);
-        }
-        if (o.state === 'hit') {
-          o.t += dt;
-          const k = Math.min(1, o.t / 0.7);
-          o.mesh.scale.set(o.w * (1 + k * 1.2), o.h * (1 + k * 1.2), 1);
-          o.mat.opacity = 1 - k;
-        } else if (o.state === 'miss') {
-          o.mat.opacity = Math.max(0.12, o.mat.opacity - dt * 1.5);
-        } else {
-          const k = 1 + Math.sin(this.time * 6 + o.z * 0.1) * 0.03;
-          o.mesh.scale.set(o.w * k, o.h * k, 1);
-        }
-      } else if (o.type === 'gate') {
+      if (o.type === 'gate') {
         o.curtain.material.map.offset.y = (this.time * 0.6) % 1;
         if (live && !o.passed && s.z < o.z) { o.passed = true; this.onGate(o); }
       }
     }
   }
 
-  ringHit(o, perfect) {
-    o.state = 'hit';
-    o.mat.color.set(perfect ? 0xffffff : 0x70ff90).multiplyScalar(3);
-    this.rings++;
-    this.combo++;
-    const pts = (perfect ? 150 : 60) * this.mult();
-    this.score += pts;
-    if (perfect) this.perfects++;
-    if (o.cell) { this.shield = Math.min(100, this.shield + 20); this.hud.callout('SHIELD +20', 'cyan'); }
-    else this.hud.callout(`${perfect ? 'PERFECT' : 'RING'} +${pts}`, perfect ? 'gold' : 'cyan');
-    this.sound.pickup();
-    this.particles.emit(this.tmp.set(o.x, o.y, o.z), { count: 26, speed: 14, c0: 0xffffff, c1: perfect ? 0xffb040 : 0x40ff90, life: 0.5, size: 0.5 });
+  // roofs for tunnels, announcements, and scoring of cleared features
+  updateFeatures(live) {
+    const s = this.ship.position, c = this.course;
+    for (let i = this.roofs.length - 1; i >= 0; i--) {
+      if (this.roofs[i].ze > s.z + 220) { this.disposeRoof(this.roofs[i]); this.roofs.splice(i, 1); }
+    }
+    let next = null;
+    for (const f of c.features) {
+      const r = c.zRange(f);
+      // build roofs as tunnels come into range
+      if (f.type === 'tunnel' && !f.built && r.zs > s.z - 700) { f.built = true; this.buildRoof(f, r); }
+      if (!live) continue;
+      if (f.pass) continue;
+      if (s.z < r.zs && s.z > r.ze) {
+        if (this.scrapedNow) f.hit = true;
+      } else if (s.z <= r.ze) {
+        f.pass = true;
+        if (!f.hit) this.featureCleared(f);
+        continue;
+      }
+      if (!next && s.z > r.ze) { next = f; next._r = r; }
+    }
+    this.scrapedNow = false;
+
+    // calm, steady prompt (no flashing) while a feature is approaching or underway
+    let kind = null;
+    if (live && next) {
+      const lead = this.speed * 2.8;
+      if (next._r.zs - s.z < lead) kind = next.type;
+    }
+    if (kind !== this.promptKind) { this.promptKind = kind; this.hud.prompt(kind); }
   }
 
-  ringMiss(o) {
-    o.state = 'miss';
-    o.mat.color.set(0xff3020).multiplyScalar(1.5);
-    if (this.combo >= 4) this.hud.callout('LINE LOST', 'red');
-    this.combo = 0;
+  featureCleared(f) {
+    this.cleared++;
+    this.combo += f.type === 'pinch' ? 3 : 2;
+    const base = { hump: 250, tunnel: 400, pinch: 600, shoulder: 250 }[f.type];
+    const pts = base * this.mult() * Math.max(1, Math.ceil(this.sector / 2));
+    this.score += pts;
+    this.shield = Math.min(100, this.shield + 8);
+    const label = { hump: 'CLEARED', tunnel: 'TUNNEL CLEARED', pinch: 'SIDEWAYS!', shoulder: 'CLEARED' }[f.type];
+    this.hud.callout(`${label} +${pts}`, f.type === 'pinch' ? 'gold' : 'cyan');
+    this.sound.pickup();
+  }
+
+  buildRoof(f, r) {
+    const len = r.zs - r.ze;
+    const segs = Math.max(2, Math.ceil(len / 5));
+    const g = new THREE.BoxGeometry(2 * (HW + 30), 1, len, 1, 1, segs);
+    g.translate(0, 0.5, 0);                        // local y in [0, 1]
+    const uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len / 26, uv.getY(i) * 6);
+    const roof = new THREE.Mesh(g, this.roofMat);
+    roof.position.z = (r.zs + r.ze) / 2;
+    roof.castShadow = roof.receiveShadow = true;
+    roof.customDepthMaterial = this.roofDepth;
+    roof.frustumCulled = false;
+    const grp = new THREE.Group();
+    grp.add(roof);
+    // light strips hanging under the roof
+    const sg = new THREE.BoxGeometry(0.5, 0.3, len);
+    sg.translate(0, -0.15, 0);
+    for (const x of [-6, 0, 6]) {
+      const m = new THREE.Mesh(sg, this.roofLightMat);
+      m.position.set(x, 0, (r.zs + r.ze) / 2);
+      m.frustumCulled = false;
+      grp.add(m);
+    }
+    this.scene.add(grp);
+    this.roofs.push({ grp, geos: [g, sg], ze: r.ze });
+  }
+
+  disposeRoof(m) {
+    this.scene.remove(m.grp);
+    m.geos.forEach(g => g.dispose());
   }
 
   onGate(o) {
@@ -590,7 +637,7 @@ export class Game {
     this.secEnd = o.z - sectorLength(n + 1);
     this.gateZ = this.secEnd;
     this.gateSpawned = false;
-    this.trench.setAccent(ACCENTS[(this.sector - 1) % ACCENTS.length]);
+    this.setAccent(ACCENTS[(this.sector - 1) % ACCENTS.length]);
     const info = sectorInfo(this.sector);
     this.hud.banner(`SECTOR ${pad2(n)} CLEAR · +${bonus.toLocaleString()}`, `SECTOR ${pad2(this.sector)} · ${info.name}`, info.tip);
     this.sound.gate();
@@ -600,25 +647,19 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- radar (course preview for the HUD)
-  updateRadar(dt, c) {
+  updateRadar(dt) {
     this.radarT -= dt;
     if (this.radarT > 0) return;
     this.radarT = 1 / 24;
     const s = this.ship.position, R = this.radar, course = this.course;
     for (let i = 0; i < R.n; i++) {
       const t = course.at(s.z - i * R.step, this.c3);
-      R.rel[i] = t.x - s.x;
-      R.half[i] = course.limX(t);
-      R.lo[i] = course.yLo(t);
-      R.hi[i] = course.yHi(t);
+      R.lft[i] = t.x + t.lw - s.x;
+      R.rgt[i] = t.x + t.rw - s.x;
+      R.flo[i] = t.floor;
+      R.cei[i] = t.top;
     }
     R.shipY = s.y;
-    R.rings.length = 0;
-    for (const o of this.objs) {
-      if (o.type !== 'ring' || o.state !== 'new') continue;
-      const k = (s.z - o.z) / R.step;
-      if (k >= 0 && k <= R.n - 1) R.rings.push({ k, x: o.x - s.x, y: o.y, cell: o.cell });
-    }
     this.hud.radar(R);
   }
 
@@ -662,15 +703,23 @@ export class Game {
     const ca = course.at(s.z - 70, this.c2);
 
     this.roll = damp(this.roll, -this.vx * 0.042, 8, dt);
+    const bankRoll = this.bank * Math.PI / 2;
     this.pitch = damp(this.pitch, this.vy * 0.018, 8, dt);
     this.yaw = damp(this.yaw, -Math.atan2(this.vx, Math.max(40, this.speed)) * 0.9, 8, dt);
-    body.rotation.set(this.pitch, this.yaw, this.roll);
+    body.rotation.set(this.pitch, this.yaw, this.roll * (1 - this.bank) + bankRoll);
     for (const g of this.ship.userData.glows) g.scale.setScalar(1.1 + Math.random() * 0.35 + this.speed / 600);
 
     const menu = this.state === 'menu';
     cam.position.x = damp(cam.position.x, s.x + (c.x - s.x) * 0.2, 9, dt);
     cam.position.y = damp(cam.position.y, s.y + (menu ? 2.6 : 3.3), 8, dt);
     cam.position.z = s.z + (menu ? 11 : 13);
+    {   // keep the camera inside the canyon: below tunnel roofs, above raised floors, between pinched walls
+      const cz = course.at(cam.position.z, this.c3);
+      cam.position.y = clamp(cam.position.y, cz.floor + 0.8, Math.max(cz.floor + 1.2, cz.top - 0.8));
+      const hx = Math.max(0.2, (cz.rw - cz.lw) / 2 - 0.6);
+      const mid = cz.x + (cz.lw + cz.rw) / 2;
+      cam.position.x = clamp(cam.position.x, mid - hx, mid + hx);
+    }
     this.look.set(s.x + (ca.x - s.x) * 0.75, s.y + 0.9 + (ca.y - c.y) * 0.55, s.z - 45);
     cam.lookAt(this.look);
     cam.rotateZ(this.roll * 0.3);
@@ -702,7 +751,7 @@ export class Game {
         l.z = cam.position.z - rand(60, 400);
         const t = course.at(l.z, this.c3);
         const w = HW * t.sx - 0.6;
-        l.x = t.x + rand(-w, w); l.y = t.y + rand(0.5, TH * t.sy);
+        l.x = t.x + rand(-w, w); l.y = t.floor + rand(0.5, Math.max(1, t.top - t.floor));
       }
       arr.set([l.x, l.y, l.z, l.x, l.y, l.z + len], i * 6);
     });
