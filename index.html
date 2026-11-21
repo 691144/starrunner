@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>STARRUNNER</title>
-  <meta name="description" content="Deep-trench interceptor run. Thread the canyon, clear the sectors, survive the core.">
+  <meta name="description" content="Fly a winding deep-trench canyon at ever-increasing speed. Hold your line.">
   <meta name="theme-color" content="#05070b">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -23,6 +23,8 @@
   <canvas id="gl" aria-label="Game view"></canvas>
   <div id="scan" aria-hidden="true"></div>
   <div id="damage-edge" aria-hidden="true"></div>
+  <div class="ew" id="ew-l" aria-hidden="true"></div><div class="ew" id="ew-r" aria-hidden="true"></div>
+  <div class="ew" id="ew-t" aria-hidden="true"></div><div class="ew" id="ew-b" aria-hidden="true"></div>
 
   <!-- ================= HUD ================= -->
   <div id="hud" class="hidden" aria-live="polite">
@@ -50,10 +52,8 @@
         <div class="shield-bar" id="h-shield"></div>
       </div>
     </div>
-    <div id="reticle" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-    <div id="lock" aria-hidden="true"><span>LOCK</span></div>
     <div id="callouts"></div>
-    <button id="btn-fire" class="touch-only" aria-label="Fire">FIRE</button>
+    <canvas id="radar" width="300" height="520" aria-hidden="true"></canvas>
   </div>
 
   <div id="banner" aria-live="assertive">
@@ -67,7 +67,7 @@
     <div class="title-wrap">
       <div class="kicker"><span class="dot"></span> DEEP-TRENCH INTERCEPTOR</div>
       <h1 class="logo">STAR<span>RUNNER</span></h1>
-      <p class="sub">Thread the canyon. Clear the sectors. Survive the core.</p>
+      <p class="sub">Follow the canyon. Hold the line. Outrun the speed.</p>
 
       <div class="diff" role="radiogroup" aria-label="Difficulty">
         <button class="diff-opt" data-diff="cadet" role="radio"><b>CADET</b><small>Forgiving shields</small></button>
@@ -108,8 +108,8 @@
       <div class="big-score" id="o-score">0</div>
       <dl class="stats">
         <div><dt>SECTOR</dt><dd id="o-sector">1</dd></div>
-        <div><dt>KILLS</dt><dd id="o-kills">0</dd></div>
-        <div><dt>CLOSE CALLS</dt><dd id="o-close">0</dd></div>
+        <div><dt>RINGS</dt><dd id="o-rings">0</dd></div>
+        <div><dt>PERFECT</dt><dd id="o-perfect">0</dd></div>
         <div><dt>DISTANCE</dt><dd id="o-dist">0</dd></div>
       </dl>
       <div class="record small" id="o-best"></div>
@@ -129,23 +129,21 @@
         <div>
           <h3>Controls</h3>
           <table class="keys">
-            <tr><td><kbd>Mouse</kbd></td><td>Steer — ship follows the cursor</td></tr>
+            <tr><td><kbd>Mouse</kbd></td><td>Flight stick: move toward a side of the screen to turn that way</td></tr>
             <tr><td><kbd>WASD</kbd> <kbd>←↑↓→</kbd></td><td>Steer</td></tr>
-            <tr><td><kbd>Click</kbd> <kbd>Space</kbd></td><td>Fire cannons</td></tr>
-            <tr><td><kbd>Drag</kbd></td><td>Touch: steer anywhere on screen</td></tr>
-            <tr><td><kbd>FIRE</kbd></td><td>Touch: hold to fire (or enable auto-fire)</td></tr>
-            <tr><td><kbd>Gamepad</kbd></td><td>Stick to steer, A / RT to fire</td></tr>
+            <tr><td><kbd>Drag</kbd></td><td>Touch: drag anywhere as a floating stick</td></tr>
+            <tr><td><kbd>Gamepad</kbd></td><td>Left stick or D-pad</td></tr>
             <tr><td><kbd>P</kbd> <kbd>Esc</kbd></td><td>Pause</td></tr>
           </table>
         </div>
         <div>
           <h3>The run</h3>
           <ul class="tips">
-            <li><b>Sectors</b> get faster and denser. Each one adds a new threat.</li>
-            <li><b>Glowing edges</b> mark solid structure. <span class="c-cyan">Cyan frames</span> are the way through.</li>
-            <li><b>Targeting computer</b> locks the nearest turret or mine. Your bolts converge on it.</li>
-            <li><b>Close calls</b> and kills build your multiplier, up to ×8. Taking a hit resets it.</li>
-            <li><span class="c-cyan">Shield cells</span> restore 30. Every sector gate restores 25.</li>
+            <li><b>The canyon winds, climbs and dives.</b> The ship does not steer itself: you must follow the course.</li>
+            <li><b>The radar</b> (bottom right) shows the canyon ahead: top-down above, side view below.</li>
+            <li><b>Scraping stone</b> drains your shield and breaks your multiplier. Walls, floor and the rim above all count.</li>
+            <li><b>Rings</b> mark a racing line. Fly through them to build a multiplier up to ×8; the centre of a ring scores <span class="c-cyan">PERFECT</span>.</li>
+            <li><b>Speed never stops climbing</b>, and each sector the canyon narrows and the bends sharpen. <span class="c-cyan">Cyan rings</span> restore 20 shield; every sector gate restores 25.</li>
           </ul>
         </div>
       </div>
@@ -162,7 +160,6 @@
         <label class="row"><span>Music</span><input type="checkbox" id="s-music"><i class="tog"></i></label>
         <label class="row"><span>Motion blur</span><input type="checkbox" id="s-blur"><i class="tog"></i></label>
         <label class="row"><span>Invert vertical</span><input type="checkbox" id="s-invert"><i class="tog"></i></label>
-        <label class="row"><span>Touch auto-fire on lock</span><input type="checkbox" id="s-autofire"><i class="tog"></i></label>
         <div class="row"><span>Graphics</span>
           <div class="seg" id="s-quality">
             <button data-q="low">LOW</button><button data-q="medium">MED</button><button data-q="high">HIGH</button>

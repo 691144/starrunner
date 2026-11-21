@@ -1,8 +1,8 @@
 // Procedural trench: recycled chunks of greebled walls, floor and surface.
 import * as THREE from 'three';
+import { HW, TH, bendMaterial, bendDepthMaterial } from './course.js';
 
-export const HW = 12;      // half-width of the trench (x = ±HW are the wall faces)
-export const TH = 40;      // trench depth (floor y=0, lip y=TH)
+export { HW, TH };
 export const CL = 120;     // chunk length along -z
 const NCHUNK = 6;
 
@@ -72,16 +72,19 @@ function scaleUV(geo, su, sv) {
 }
 
 export class Trench {
-  constructor(scene) {
+  constructor(scene, course) {
     this.scene = scene;
+    this.course = course;
     this.boxGeo = new THREE.BoxGeometry(1, 1, 1);
+    this.longBoxGeo = new THREE.BoxGeometry(1, 1, 1, 1, 1, 24);   // long ledges need slices to follow bends
+    this.depthMat = bendDepthMaterial(course);
 
     const wallTex = panelTexture(512, '#8d9299', 5, true);
     const greebleTex = panelTexture(256, '#9aa0a7', 3, true);
-    this.wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.82, metalness: 0.18 });
-    this.greebleMat = new THREE.MeshStandardMaterial({ map: greebleTex, roughness: 0.75, metalness: 0.25 });
-    this.accentMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.7, 0.3).multiplyScalar(3) });
-    this.whiteMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.95, 0.85).multiplyScalar(2.2) });
+    this.wallMat = bendMaterial(new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.82, metalness: 0.18 }), course);
+    this.greebleMat = bendMaterial(new THREE.MeshStandardMaterial({ map: greebleTex, roughness: 0.75, metalness: 0.25 }), course);
+    this.accentMat = bendMaterial(new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.7, 0.3).multiplyScalar(3) }), course);
+    this.whiteMat = bendMaterial(new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.95, 0.85).multiplyScalar(2.2) }), course);
     this.greebleTex = greebleTex;
 
     this.chunks = [];
@@ -161,19 +164,22 @@ export class Trench {
       }
     }
 
-    const inst = new THREE.InstancedMesh(this.boxGeo, this.greebleMat, boxes.length);
     const o = new THREE.Object3D();
     const col = new THREE.Color();
-    boxes.forEach((b, i) => {
-      o.position.set(b[0], b[1], b[2]);
-      o.scale.set(b[3], b[4], b[5]);
-      o.updateMatrix();
-      inst.setMatrixAt(i, o.matrix);
-      inst.setColorAt(i, col.setScalar(b[6]));
-    });
-    inst.castShadow = inst.receiveShadow = true;
-    inst.computeBoundingSphere();
-    group.add(inst);
+    for (const [list, geo] of [[boxes.filter(b => b[5] <= 14), this.boxGeo], [boxes.filter(b => b[5] > 14), this.longBoxGeo]]) {
+      const inst = new THREE.InstancedMesh(geo, this.greebleMat, list.length);
+      list.forEach((b, i) => {
+        o.position.set(b[0], b[1], b[2]);
+        o.scale.set(b[3], b[4], b[5]);
+        o.updateMatrix();
+        inst.setMatrixAt(i, o.matrix);
+        inst.setColorAt(i, col.setScalar(b[6]));
+      });
+      inst.castShadow = inst.receiveShadow = true;
+      inst.customDepthMaterial = this.depthMat;
+      inst.frustumCulled = false;
+      group.add(inst);
+    }
 
     for (const [arr, mat] of [[lightsA, this.accentMat], [lightsW, this.whiteMat]]) {
       const lm = new THREE.InstancedMesh(this.boxGeo, mat, arr.length);
@@ -183,12 +189,12 @@ export class Trench {
         o.updateMatrix();
         lm.setMatrixAt(i, o.matrix);
       });
-      lm.computeBoundingSphere();
+      lm.frustumCulled = false;
       group.add(lm);
     }
 
     // ---- base planes ----
-    const wallGeo = scaleUV(new THREE.PlaneGeometry(CL, TH), CL / 22, TH / 22);
+    const wallGeo = scaleUV(new THREE.PlaneGeometry(CL, TH, 40, 1), CL / 22, TH / 22);
     for (const s of [-1, 1]) {
       const w = new THREE.Mesh(wallGeo, this.wallMat);
       w.rotation.y = s < 0 ? Math.PI / 2 : -Math.PI / 2;
@@ -196,12 +202,12 @@ export class Trench {
       w.receiveShadow = true;
       group.add(w);
     }
-    const floor = new THREE.Mesh(scaleUV(new THREE.PlaneGeometry(HW * 2, CL), HW * 2 / 22, CL / 22), this.wallMat);
+    const floor = new THREE.Mesh(scaleUV(new THREE.PlaneGeometry(HW * 2, CL, 1, 40), HW * 2 / 22, CL / 22), this.wallMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(0, 0, -CL / 2);
     floor.receiveShadow = true;
     group.add(floor);
-    const surfGeo = scaleUV(new THREE.PlaneGeometry(200, CL), 200 / 30, CL / 30);
+    const surfGeo = scaleUV(new THREE.PlaneGeometry(200, CL, 1, 40), 200 / 30, CL / 30);
     for (const s of [-1, 1]) {
       const p = new THREE.Mesh(surfGeo, this.wallMat);
       p.rotation.x = -Math.PI / 2;
@@ -209,6 +215,7 @@ export class Trench {
       p.receiveShadow = true;
       group.add(p);
     }
+    group.traverse(m => { m.frustumCulled = false; });
     return group;
   }
 

@@ -11,7 +11,7 @@ const store = {
 
 const coarse = matchMedia('(hover: none) and (pointer: coarse)').matches;
 const settings = Object.assign({
-  sfx: true, music: true, blur: true, invertY: false, autofire: coarse, quality: coarse ? 'medium' : 'high',
+  sfx: true, music: true, blur: true, invertY: false, quality: coarse ? 'medium' : 'high',
 }, store.get('settings', {}));
 let diffKey = store.get('diff', 'pilot');
 let records = store.get('records', {}); // { pilot: {score, sector}, ... }
@@ -23,7 +23,8 @@ for (let i = 0; i < SEG; i++) shieldBar.appendChild(document.createElement('b'))
 const segs = [...shieldBar.children];
 const cache = {};
 const setText = (el, key, v) => { if (cache[key] !== v) { cache[key] = v; el.textContent = v; } };
-const reticle = $('reticle'), lockEl = $('lock');
+const ew = [$('ew-l'), $('ew-r'), $('ew-t'), $('ew-b')];
+const radarCv = $('radar'), rctx = radarCv.getContext('2d');
 let bannerTimer = 0;
 
 const hud = {
@@ -77,15 +78,13 @@ const hud = {
     setTimeout(() => e.classList.remove('flash'), 90);
   },
   sectorUp() { /* banner covers it */ },
-  reticle(x, y, on) {
-    if (!on) { reticle.style.display = 'none'; return; }
-    reticle.style.display = 'block';
-    reticle.style.transform = `translate(${(x * 0.5 + 0.5) * innerWidth}px, ${(-y * 0.5 + 0.5) * innerHeight}px)`;
+  edges(v) {
+    for (let i = 0; i < 4; i++) {
+      const o = Math.round(v[i] * 100) / 100;
+      if (cache['e' + i] !== o) { cache['e' + i] = o; ew[i].style.opacity = o; }
+    }
   },
-  lock(x, y, on) {
-    lockEl.classList.toggle('on', on);
-    if (on) lockEl.style.transform = `translate(${(x * 0.5 + 0.5) * innerWidth}px, ${(-y * 0.5 + 0.5) * innerHeight}px)`;
-  },
+  radar(r) { drawRadar(r); },
   paused(p) { show('screen-pause', p); },
   gameOver(st) {
     const prev = records[st.difficulty];
@@ -93,8 +92,8 @@ const hud = {
     if (isNew) { records[st.difficulty] = { score: st.score, sector: st.sector }; store.set('records', records); }
     $('o-score').textContent = st.score.toLocaleString();
     $('o-sector').textContent = st.sector;
-    $('o-kills').textContent = st.kills;
-    $('o-close').textContent = st.closeCalls;
+    $('o-rings').textContent = st.rings;
+    $('o-perfect').textContent = st.perfects;
     $('o-dist').textContent = (st.distance / 1000).toFixed(1) + ' km';
     $('o-newrec').classList.toggle('hidden', !isNew || st.score === 0);
     const r = records[st.difficulty];
@@ -106,12 +105,61 @@ const hud = {
   },
 };
 
+// ---------------- course radar ----------------
+function drawRadar(r) {
+  const W = 300, TOPH = 300, SY0 = 320, SH = 200, c = rctx;
+  c.clearRect(0, 0, W, 520);
+  c.fillStyle = 'rgba(4,7,11,.62)';
+  c.fillRect(0, 0, W, TOPH); c.fillRect(0, SY0, W, SH);
+  c.strokeStyle = 'rgba(255,181,71,.35)'; c.lineWidth = 2;
+  c.strokeRect(1, 1, W - 2, TOPH - 2); c.strokeRect(1, SY0 + 1, W - 2, SH - 2);
+  c.font = '18px "Share Tech Mono", monospace'; c.fillStyle = 'rgba(255,181,71,.8)';
+  c.fillText('COURSE', 12, 24); c.fillText('PROFILE', 12, SY0 + 24);
+
+  const n = r.n, sx = 3.3, bot = TOPH - 26, top = 34, dy = (bot - top) / (n - 1);
+  const cl = (v, a, b) => Math.max(a, Math.min(b, v));
+  const py = i => bot - i * dy;
+  c.beginPath();
+  for (let i = 0; i < n; i++) c.lineTo(cl(W / 2 + (r.rel[i] - r.half[i]) * sx, 3, W - 3), py(i));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(cl(W / 2 + (r.rel[i] + r.half[i]) * sx, 3, W - 3), py(i));
+  c.closePath();
+  c.fillStyle = 'rgba(111,230,255,.10)'; c.fill();
+  c.strokeStyle = 'rgba(255,181,71,.9)'; c.lineWidth = 3;
+  for (const s of [-1, 1]) {
+    c.beginPath();
+    for (let i = 0; i < n; i++) c.lineTo(cl(W / 2 + (r.rel[i] + s * r.half[i]) * sx, 3, W - 3), py(i));
+    c.stroke();
+  }
+  c.strokeStyle = 'rgba(255,255,255,.28)'; c.lineWidth = 1.5; c.setLineDash([6, 8]);
+  c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(cl(W / 2 + r.rel[i] * sx, 5, W - 5), py(i)); c.stroke(); c.setLineDash([]);
+  for (const g of r.rings) {
+    c.fillStyle = g.cell ? '#59d8ff' : '#ffb547';
+    c.beginPath(); c.ellipse(cl(W / 2 + g.x * sx, 5, W - 5), bot - g.k * dy, 8, 4, 0, 0, 7); c.fill();
+  }
+  c.fillStyle = '#fff';
+  c.beginPath(); c.moveTo(W / 2, bot - 8); c.lineTo(W / 2 - 9, bot + 12); c.lineTo(W / 2 + 9, bot + 12); c.closePath(); c.fill();
+
+  // side profile: ship at left, distance ahead to the right
+  const sc = 3.2, my = SY0 + SH / 2, x0 = 34, dx = (W - 16 - x0) / (n - 1);
+  const vy = y => cl(my - (y - r.shipY) * sc, SY0 + 4, SY0 + SH - 4);
+  c.beginPath();
+  for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(r.hi[i]));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(x0 + i * dx, vy(r.lo[i]));
+  c.closePath(); c.fillStyle = 'rgba(111,230,255,.10)'; c.fill();
+  c.strokeStyle = 'rgba(255,181,71,.9)'; c.lineWidth = 3;
+  for (const arr of [r.hi, r.lo]) { c.beginPath(); for (let i = 0; i < n; i++) c.lineTo(x0 + i * dx, vy(arr[i])); c.stroke(); }
+  for (const g of r.rings) {
+    c.fillStyle = g.cell ? '#59d8ff' : '#ffb547';
+    c.beginPath(); c.ellipse(x0 + g.k * dx, vy(g.y), 4, 8, 0, 0, 7); c.fill();
+  }
+  c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x0 - 4, my); c.lineTo(x0 - 16, my - 8); c.lineTo(x0 - 16, my + 8); c.closePath(); c.fill();
+}
+
 // ---------------- core objects ----------------
 const sound = new Sound();
 sound.sfxOn = settings.sfx;
 sound.musicOn = settings.music;
 const input = new Input();
-input.bindFireButton($('btn-fire'));
 
 let game;
 try {
@@ -121,7 +169,7 @@ try {
   $('loading').innerHTML = '<span>WEBGL UNAVAILABLE — THIS DEVICE CANNOT RUN STARRUNNER</span>';
   throw err;
 }
-game.applySettings({ quality: settings.quality, blur: settings.blur, invertY: settings.invertY, autofire: settings.autofire });
+game.applySettings({ quality: settings.quality, blur: settings.blur, invertY: settings.invertY });
 setTimeout(() => $('loading').classList.add('done'), 300);
 
 // ---------------- screens ----------------
@@ -211,7 +259,6 @@ bindToggle('s-sfx', 'sfx', v => sound.setSfx(v));
 bindToggle('s-music', 'music', v => sound.setMusic(v));
 bindToggle('s-blur', 'blur', v => game.applySettings({ blur: v }));
 bindToggle('s-invert', 'invertY', v => game.applySettings({ invertY: v }));
-bindToggle('s-autofire', 'autofire', v => game.applySettings({ autofire: v }));
 const qBtns = [...document.querySelectorAll('#s-quality button')];
 const markQ = () => qBtns.forEach(b => b.classList.toggle('on', b.dataset.q === settings.quality));
 qBtns.forEach(b => b.addEventListener('click', () => {

@@ -1,5 +1,5 @@
 // STARRUNNER service worker: precache the app shell, cache fonts at runtime, work fully offline.
-const VERSION = 'starrunner-v1';
+const VERSION = 'starrunner-v2';
 const DEV = ['localhost', '127.0.0.1'].includes(self.location.hostname);
 const SHELL = [
   './',
@@ -10,6 +10,7 @@ const SHELL = [
   './js/main.js',
   './js/game.js',
   './js/trench.js',
+  './js/course.js',
   './js/fx.js',
   './js/ship.js',
   './js/audio.js',
